@@ -210,6 +210,10 @@ export async function POST(req: Request) {
       const totalCut = commissionAmount + fixedFeeAmount + deliverySubsidyAmount + (Number(merchantDiscount) || 0) + (Number(extraDiscount) || 0);
       const itemSummary = processedItems.map((p) => `${p.qty}x ${p.description}`).join(", ");
       const lineDescription = `${posOrderNo} • ${itemSummary} (Bruto Rp ${Math.round(grossSubtotal).toLocaleString("id-ID")}${totalCut > 0 ? `, Pot. Rp ${Math.round(totalCut).toLocaleString("id-ID")}` : ""})`;
+      const singleItem = processedItems.length === 1 ? processedItems[0] : null;
+      const recapLineProductId = singleItem ? singleItem.productId : null;
+      const recapLineQty = singleItem ? singleItem.qty : 1;
+      const recapLineUnitPrice = recapLineQty > 0 ? Math.round(receivedAmount / recapLineQty) : receivedAmount;
 
       // Cari tagihan OPEN untuk platform & tanggal yang sama
       const existingRecap = await prisma.salesInvoice.findFirst({
@@ -249,10 +253,10 @@ export async function POST(req: Request) {
         await prisma.salesInvoiceItem.create({
           data: {
             salesInvoiceId: existingRecap.id,
-            productId: null,
+            productId: recapLineProductId,
             description: lineDescription,
-            qty: 1,
-            unitPrice: receivedAmount,
+            qty: recapLineQty,
+            unitPrice: recapLineUnitPrice,
             taxRate: 0,
             lineTotal: receivedAmount,
           },
@@ -315,10 +319,10 @@ export async function POST(req: Request) {
             items: {
               create: [
                 {
-                  productId: null,
+                  productId: recapLineProductId,
                   description: lineDescription,
-                  qty: 1,
-                  unitPrice: receivedAmount,
+                  qty: recapLineQty,
+                  unitPrice: recapLineUnitPrice,
                   taxRate: 0,
                   lineTotal: receivedAmount,
                 },
