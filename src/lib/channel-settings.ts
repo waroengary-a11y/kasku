@@ -171,6 +171,7 @@ export function calculateNetRevenue(
 
   let commissionAmount = 0;
   let commissionBase = input.grossPrice;
+  let subsidyApplied = false;
 
   for (const step of scheme.steps) {
     if (step.type === "diskon_merchant" && input.merchantDiscount > 0) {
@@ -187,9 +188,15 @@ export function calculateNetRevenue(
       stepLog.push({ label: "Biaya tetap per order", amount: -channel.fixedFeePerOrder, running });
     } else if (step.type === "subsidi_ongkir" && input.deliverySubsidy > 0) {
       running -= input.deliverySubsidy;
+      subsidyApplied = true;
       stepLog.push({ label: "Subsidi ongkir merchant", amount: -input.deliverySubsidy, running });
     }
     // diskon_platform & diskon_bersama ditanggung platform, tidak mengurangi running
+  }
+
+  if (!subsidyApplied && input.deliverySubsidy > 0) {
+    running -= input.deliverySubsidy;
+    stepLog.push({ label: "Subsidi ongkir merchant", amount: -input.deliverySubsidy, running });
   }
 
   const netRevenue = running;

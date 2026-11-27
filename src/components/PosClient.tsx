@@ -78,6 +78,7 @@ export function PosClient({
   const [selectedCashId, setSelectedCashId] = useState(cashAccounts[0]?.id || "");
   const [paymentMethod, setPaymentMethod] = useState("Tunai");
   const [extraDiscountTotal, setExtraDiscountTotal] = useState<number>(0);
+  const [deliverySubsidy, setDeliverySubsidy] = useState<number>(0);
   const [tendered, setTendered] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -194,6 +195,7 @@ export function PosClient({
     setCart([]);
     setTendered(0);
     setExtraDiscountTotal(0);
+    setDeliverySubsidy(0);
     setError("");
   }
 
@@ -230,13 +232,13 @@ export function PosClient({
         grossPrice: rawSubtotal,
         merchantDiscount: autoBillDiscount + (Number(extraDiscountTotal) || 0),
         platformDiscount: 0,
-        deliverySubsidy: 0,
+        deliverySubsidy: Number(deliverySubsidy) || 0,
         hpp: 0,
       },
       activeChannelCfg,
       activeScheme
     );
-  }, [rawSubtotal, autoBillDiscount, extraDiscountTotal, activeChannelCfg, activeScheme]);
+  }, [rawSubtotal, autoBillDiscount, extraDiscountTotal, deliverySubsidy, activeChannelCfg, activeScheme]);
 
   const netTotalToReceive = channel !== "offline" ? posCalcResult.netRevenue : grandTotal;
 
@@ -269,17 +271,19 @@ export function PosClient({
     setLoading(true);
 
     try {
+      const effectivePaymentMethod = channel !== "offline" ? CHANNEL_META[channel].name : paymentMethod;
       const res = await fetch("/api/pos/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          cashAccountId: selectedCashId,
-          paymentMethod,
-          tenderedAmount: paymentMethod === "Tunai" ? (tendered || netTotalToReceive) : netTotalToReceive,
+          cashAccountId: selectedCashId || cashAccounts[0]?.id,
+          paymentMethod: effectivePaymentMethod,
+          tenderedAmount: channel === "offline" && paymentMethod === "Tunai" ? (tendered || netTotalToReceive) : netTotalToReceive,
           channelId: channel,
           channel: CHANNEL_META[channel].name,
           schemeId: activeChannelCfg?.defaultSchemeId,
           extraDiscount: Number(extraDiscountTotal) || 0,
+          deliverySubsidy: Number(deliverySubsidy) || 0,
           items: cart.map((it) => ({
             productId: it.product.id,
             qty: it.qty,
@@ -304,7 +308,7 @@ export function PosClient({
         grossTotal: rawSubtotal,
         commissionAmount: data.invoice.commissionAmount || 0,
         fixedFeeAmount: data.invoice.fixedFeeAmount || 0,
-        deliverySubsidy: 0,
+        deliverySubsidy: Number(deliverySubsidy) || 0,
         netRevenue: data.invoice.netRevenue ?? data.invoice.grandTotal,
         grandTotal: data.invoice.grandTotal,
         tenderedAmount: data.invoice.tenderedAmount,
@@ -638,41 +642,50 @@ export function PosClient({
               </div>
             )}
 
-            {/* Metode Pembayaran & Akun Kas */}
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Metode Bayar
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-medium"
-                >
-                  <option value="Tunai">Tunai / Cash</option>
-                  <option value="QRIS">QRIS</option>
-                  <option value="Transfer Bank">Transfer Bank</option>
-                  <option value="Kartu Debit">Kartu Debit</option>
-                </select>
-              </div>
+            {/* Metode Pembayaran & Akun Kas (hanya untuk Offline / Dine In) */}
+            {channel === "offline" ? (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Metode Bayar
+                  </label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-medium"
+                  >
+                    <option value="Tunai">Tunai / Cash</option>
+                    <option value="QRIS">QRIS</option>
+                    <option value="Transfer Bank">Transfer Bank</option>
+                    <option value="Kartu Debit">Kartu Debit</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Masuk ke Kas/Bank
-                </label>
-                <select
-                  value={selectedCashId}
-                  onChange={(e) => setSelectedCashId(e.target.value)}
-                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-medium"
-                >
-                  {cashAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Masuk ke Kas/Bank
+                  </label>
+                  <select
+                    value={selectedCashId}
+                    onChange={(e) => setSelectedCashId(e.target.value)}
+                    className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-medium"
+                  >
+                    {cashAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-blue-800">
+                <span className="font-semibold">
+                  {CHANNEL_META[channel].emoji} Pembayaran via {CHANNEL_META[channel].name}
+                </span>
+                <span className="text-[11px] font-bold">Otomatis</span>
+              </div>
+            )}
 
             {/* Diskon Otomatis Total Belanja jika aktif */}
             {autoBillDiscount > 0 && (
@@ -682,26 +695,45 @@ export function PosClient({
               </div>
             )}
 
-            {/* Diskon Tambahan / Voucher Kasir */}
+            {/* Diskon Tambahan / Voucher Kasir & Diskon Ongkir */}
             {cart.length > 0 && (
-              <div className="flex items-center justify-between gap-2 p-2 bg-white rounded-xl border border-slate-200 text-xs">
-                <div className="flex items-center gap-1.5 text-slate-600 font-semibold">
-                  <Tag className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Potongan / Diskon (Rp)</span>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2 p-2 bg-white rounded-xl border border-slate-200 text-xs">
+                  <div className="flex items-center gap-1.5 text-slate-600 font-semibold">
+                    <Tag className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Potongan / Diskon (Rp)</span>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    value={extraDiscountTotal || ""}
+                    onChange={(e) => setExtraDiscountTotal(Number(e.target.value))}
+                    placeholder="0"
+                    className="w-28 px-2 py-1 border border-slate-300 rounded-lg font-bold text-right text-xs"
+                  />
                 </div>
-                <input
-                  type="number"
-                  min="0"
-                  value={extraDiscountTotal || ""}
-                  onChange={(e) => setExtraDiscountTotal(Number(e.target.value))}
-                  placeholder="0"
-                  className="w-28 px-2 py-1 border border-slate-300 rounded-lg font-bold text-right text-xs"
-                />
+
+                {channel !== "offline" && (
+                  <div className="flex items-center justify-between gap-2 p-2 bg-white rounded-xl border border-slate-200 text-xs">
+                    <div className="flex items-center gap-1.5 text-slate-600 font-semibold">
+                      <Tag className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Diskon / Subsidi Ongkir (Rp)</span>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={deliverySubsidy || ""}
+                      onChange={(e) => setDeliverySubsidy(Number(e.target.value))}
+                      placeholder="0"
+                      className="w-28 px-2 py-1 border border-slate-300 rounded-lg font-bold text-right text-xs"
+                    />
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Input Uang Diterima (Jika Tunai) */}
-            {paymentMethod === "Tunai" && cart.length > 0 && (
+            {/* Input Uang Diterima (Hanya Jika Offline & Tunai) */}
+            {channel === "offline" && paymentMethod === "Tunai" && cart.length > 0 && (
               <div className="space-y-1.5">
                 <label className="block text-[11px] font-semibold text-slate-600">
                   Uang Diterima
@@ -740,7 +772,7 @@ export function PosClient({
                   <span>- {fmtIDR(totalDiscountAmount)}</span>
                 </div>
               )}
-              {channel !== "offline" && cart.length > 0 && (posCalcResult.commissionAmount > 0 || posCalcResult.fixedFee > 0) && (
+              {channel !== "offline" && cart.length > 0 && (posCalcResult.commissionAmount > 0 || posCalcResult.fixedFee > 0 || posCalcResult.deliverySubsidy > 0) && (
                 <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs space-y-1 my-1.5">
                   <div className="flex justify-between text-slate-600">
                     <span>Harga Jual ({CHANNEL_META[channel].badge})</span>
@@ -758,13 +790,19 @@ export function PosClient({
                       <span className="font-semibold">- {fmtIDR(posCalcResult.fixedFee)}</span>
                     </div>
                   )}
+                  {posCalcResult.deliverySubsidy > 0 && (
+                    <div className="flex justify-between text-rose-600">
+                      <span>Diskon / Subsidi Ongkir</span>
+                      <span className="font-semibold">- {fmtIDR(posCalcResult.deliverySubsidy)}</span>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="flex justify-between items-center text-sm font-bold text-slate-900">
                 <span>{channel !== "offline" ? "Penerimaan Bersih (Net)" : "Total Tagihan"}</span>
                 <span className="text-xl text-blue-600 font-extrabold">{fmtIDR(netTotalToReceive)}</span>
               </div>
-              {paymentMethod === "Tunai" && tendered > netTotalToReceive && (
+              {channel === "offline" && paymentMethod === "Tunai" && tendered > netTotalToReceive && (
                 <div className="flex justify-between items-center text-xs font-semibold text-emerald-600">
                   <span>Kembalian</span>
                   <span>{fmtIDR(Math.max(0, (tendered || 0) - netTotalToReceive))}</span>
@@ -775,7 +813,7 @@ export function PosClient({
             {/* Tombol Selesaikan Transaksi */}
             <button
               type="button"
-              disabled={loading || cart.length === 0 || (paymentMethod === "Tunai" && tendered > 0 && tendered < netTotalToReceive)}
+              disabled={loading || cart.length === 0 || (channel === "offline" && paymentMethod === "Tunai" && tendered > 0 && tendered < netTotalToReceive)}
               onClick={handleCheckout}
               className="w-full py-3.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md active:scale-[0.99] transition disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -840,6 +878,12 @@ export function PosClient({
                   <div className="flex justify-between text-rose-600">
                     <span>Biaya Tetap</span>
                     <span>- {fmtIDR(checkoutSuccess.fixedFeeAmount)}</span>
+                  </div>
+                )}
+                {checkoutSuccess.deliverySubsidy > 0 && (
+                  <div className="flex justify-between text-rose-600">
+                    <span>Subsidi Ongkir</span>
+                    <span>- {fmtIDR(checkoutSuccess.deliverySubsidy)}</span>
                   </div>
                 )}
                 <div className="flex justify-between font-bold text-sm">
