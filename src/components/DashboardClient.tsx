@@ -13,8 +13,8 @@ import {
   Package,
   BarChart3,
   CreditCard,
-  Building2,
   Users,
+  Store,
 } from "lucide-react";
 import {
   AgingBarChartSVG,
@@ -323,12 +323,12 @@ export function DashboardClient({
               <span className="text-[11px] font-semibold text-slate-800 mt-1.5">Kas &amp; Bank</span>
             </Link>
 
-            {/* Aset Tetap */}
-            <Link href="/akun" className="flex flex-col items-center group">
+            {/* Kasir POS */}
+            <Link href="/kasir" className="flex flex-col items-center group">
               <div className="w-13 h-13 rounded-2xl bg-[#e0e7ff] flex items-center justify-center shadow-xs active:scale-95 transition group-hover:scale-105">
-                <Building2 className="w-6 h-6 text-[#4f46e5]" />
+                <Store className="w-6 h-6 text-[#4f46e5]" />
               </div>
-              <span className="text-[11px] font-semibold text-slate-800 mt-1.5">Aset Tetap</span>
+              <span className="text-[11px] font-semibold text-slate-800 mt-1.5">Kasir POS</span>
             </Link>
 
             {/* Kontak */}

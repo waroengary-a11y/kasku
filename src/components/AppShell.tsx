@@ -792,7 +792,7 @@ export function AppShell({ companyName, userName, isDemo, children }: AppShellPr
               <IconBiaya />
               <span>Biaya</span>
             </Link>
-            <Link href="/kas-bank" className="kledo-quick-action">
+            <Link href="/kasir" className="kledo-quick-action">
               <IconKasBank />
               <span>Kasir</span>
             </Link>
