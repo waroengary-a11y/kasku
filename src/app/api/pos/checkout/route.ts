@@ -49,7 +49,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Pilih minimal 1 produk." }, { status: 400 });
     }
 
-    if (!cashAccountId) {
+    // Untuk channel online, cashAccountId tidak wajib (akan dicatat sebagai Piutang Platform)
+    const isOnlineChannelEarly = channelId !== "offline";
+    if (!cashAccountId && !isOnlineChannelEarly) {
       return NextResponse.json({ error: "Pilih akun penerimaan kas/bank." }, { status: 400 });
     }
 
@@ -82,7 +84,7 @@ export async function POST(req: Request) {
       prisma.accountMapping.findMany({
         where: {
           companyId: session.companyId,
-          mappingKey: { in: ["default_sales", "default_cogs", "default_ar"] },
+          mappingKey: { in: ["default_sales", "default_cogs", "default_ar", "platform_receivable"] },
         },
       }),
     ]);
@@ -92,6 +94,8 @@ export async function POST(req: Request) {
     if (!salesAccountId) {
       return NextResponse.json({ error: "Akun Pendapatan Penjualan (default_sales) belum dikonfigurasi." }, { status: 400 });
     }
+    // Untuk channel online: gunakan akun Piutang Platform jika ada, fallback ke akun AR default, lalu akun kas
+    const platformReceivableId = getMapping("platform_receivable") ?? getMapping("default_ar") ?? cashAccountId;
 
     // 3. Ambil data produk
     const productIds = items.map((i) => i.productId);
@@ -181,11 +185,16 @@ export async function POST(req: Request) {
     // 6. Buat Jurnal — pisahkan bruto, diskon, komisi, biaya tetap, subsidi
     const journalLines: Array<{ accountId: string; contactId?: string; debit: number; credit: number; description: string }> = [];
 
+    const effectiveOnlineAccountId = platformReceivableId || cashAccountId;
+    if (isOnlineChannel && !effectiveOnlineAccountId) {
+      return NextResponse.json({ error: "Akun Piutang Platform / Kas belum dikonfigurasi." }, { status: 400 });
+    }
+
     if (isOnlineChannel) {
       // Untuk channel online: Debit Piutang Platform (atau langsung kas jika sudah cair)
-      // Kredit Penjualan bruto
+      // Kredit Penjualan neto
       journalLines.push({
-        accountId: cashAccountId, // Kas/Bank atau akun Piutang Platform
+        accountId: effectiveOnlineAccountId,
         contactId: targetContactId,
         debit: receivedAmount,
         credit: 0,
@@ -265,13 +274,14 @@ export async function POST(req: Request) {
     });
 
     // 8. Payment
+    const paymentAccountId = isOnlineChannel ? effectiveOnlineAccountId : cashAccountId;
     await prisma.payment.create({
       data: {
         companyId: session.companyId,
         paymentNo,
         direction: "IN",
         contactId: targetContactId,
-        cashAccountId,
+        cashAccountId: paymentAccountId,
         paymentDate: now,
         amount: finalGrandTotal,
         method: paymentMethod,

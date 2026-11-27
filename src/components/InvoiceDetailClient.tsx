@@ -264,10 +264,10 @@ export function InvoiceDetailClient({
               <span className="font-semibold">{numFmt(invoice.subtotal)}</span>
             </div>
             {invoice.subtotal + invoice.taxTotal - invoice.grandTotal > 0 && (
-              <div className="flex justify-between py-1.5 border-b border-slate-100 text-slate-700">
-                <span className="font-medium">Pemotongan / Diskon</span>
+              <div className="flex justify-between py-1.5 border-b border-slate-100 text-rose-600">
+                <span className="font-medium">Potongan / Komisi / Diskon</span>
                 <span className="font-semibold">
-                  ({numFmt(invoice.subtotal + invoice.taxTotal - invoice.grandTotal)})
+                  - {numFmt(invoice.subtotal + invoice.taxTotal - invoice.grandTotal)}
                 </span>
               </div>
             )}
@@ -278,7 +278,7 @@ export function InvoiceDetailClient({
               </div>
             )}
             <div className="flex justify-between py-1.5 border-b border-slate-100 font-bold text-slate-900">
-              <span>Total</span>
+              <span>{invoice.notes?.includes("[Kasir ") ? "Penerimaan Bersih (Net)" : "Total"}</span>
               <span>{numFmt(invoice.grandTotal)}</span>
             </div>
             {invoice.paidAmount > 0 && (
