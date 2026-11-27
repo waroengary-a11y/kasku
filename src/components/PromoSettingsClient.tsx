@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { PromoSettingsPayload } from "@/lib/promo-settings";
+import { PromoSettingsPayload } from "@/lib/promo-types";
 
 interface ProductRow {
   id: string;

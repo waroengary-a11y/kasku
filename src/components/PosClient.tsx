@@ -17,7 +17,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { PromoSettingsPayload, DEFAULT_PROMO_SETTINGS } from "@/lib/promo-settings";
+import { PromoSettingsPayload, DEFAULT_PROMO_SETTINGS } from "@/lib/promo-types";
 
 interface ProductItem {
   id: string;
