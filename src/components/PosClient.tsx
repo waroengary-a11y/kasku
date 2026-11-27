@@ -6,12 +6,15 @@ import {
   ArrowLeft,
   CheckCircle2,
   Minus,
+  Percent,
   Plus,
   Printer,
   RotateCcw,
   Search,
   ShoppingCart,
+  Tag,
   Trash2,
+  Users,
 } from "lucide-react";
 
 interface ProductItem {
@@ -27,6 +30,8 @@ interface ProductItem {
 interface CartItem {
   product: ProductItem;
   qty: number;
+  discountPct: number;
+  customPrice?: number; // Override harga jika diubah kasir
 }
 
 interface CashAccount {
@@ -34,6 +39,24 @@ interface CashAccount {
   name: string;
   balance: number;
 }
+
+// Tipe Pelanggan / Channel Penjualan
+export type CustomerChannel = "offline" | "gofood" | "grabfood" | "shopeefood";
+
+export interface ChannelConfig {
+  id: CustomerChannel;
+  name: string;
+  badge: string;
+  markupPct: number; // Persentase markup harga online (misal +20% untuk ojol)
+  colorCls: string;
+}
+
+const CHANNELS: ChannelConfig[] = [
+  { id: "offline", name: "Offline / Dine In", badge: "Dine In", markupPct: 0, colorCls: "bg-slate-100 text-slate-800 border-slate-300" },
+  { id: "gofood", name: "GoFood", badge: "GoFood", markupPct: 20, colorCls: "bg-red-50 text-red-700 border-red-200" },
+  { id: "grabfood", name: "GrabFood", badge: "GrabFood", markupPct: 20, colorCls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  { id: "shopeefood", name: "ShopeeFood", badge: "ShopeeFood", markupPct: 20, colorCls: "bg-amber-50 text-amber-700 border-amber-200" },
+];
 
 const fmtIDR = (n: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -53,22 +76,41 @@ export function PosClient({
   categories: { id: string; name: string }[];
   cashAccounts: CashAccount[];
 }) {
+  const [channel, setChannel] = useState<CustomerChannel>("offline");
   const [selectedCat, setSelectedCat] = useState("all");
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedCashId, setSelectedCashId] = useState(cashAccounts[0]?.id || "");
   const [paymentMethod, setPaymentMethod] = useState("Tunai");
+  const [extraDiscountTotal, setExtraDiscountTotal] = useState<number>(0); // Diskon total transaksi (Rp)
   const [tendered, setTendered] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [checkoutSuccess, setCheckoutSuccess] = useState<{
     invoiceNo: string;
+    channelName: string;
+    subtotal: number;
+    discountTotal: number;
     grandTotal: number;
     tenderedAmount: number;
     changeAmount: number;
-    items: { name: string; qty: number; total: number }[];
+    items: { name: string; qty: number; unitPrice: number; discountPct: number; total: number }[];
     date: string;
   } | null>(null);
+
+  // Ambil info konfigurasi channel aktif
+  const activeChannel = useMemo(
+    () => CHANNELS.find((c) => c.id === channel) || CHANNELS[0],
+    [channel]
+  );
+
+  // Fungsi kalkulasi harga produk berdasarkan channel
+  const getProductPrice = (basePrice: number) => {
+    if (activeChannel.markupPct <= 0) return basePrice;
+    // Otomatis markup dan bulatkan ke ratusan terdekat
+    const marked = basePrice * (1 + activeChannel.markupPct / 100);
+    return Math.round(marked / 100) * 100;
+  };
 
   // Filter Produk
   const filteredProducts = useMemo(() => {
@@ -83,15 +125,9 @@ export function PosClient({
     });
   }, [products, selectedCat, search]);
 
-  // Total Belanja
-  const totalAmount = useMemo(() => {
-    return cart.reduce((sum, item) => sum + item.product.sellPrice * item.qty, 0);
-  }, [cart]);
-
-  const change = Math.max(0, (tendered || 0) - totalAmount);
-
   // Cart operations
   function addToCart(p: ProductItem) {
+    const channelPrice = getProductPrice(p.sellPrice);
     setCart((prev) => {
       const existing = prev.find((it) => it.product.id === p.id);
       if (existing) {
@@ -99,8 +135,24 @@ export function PosClient({
           it.product.id === p.id ? { ...it, qty: it.qty + 1 } : it
         );
       }
-      return [...prev, { product: p, qty: 1 }];
+      return [...prev, { product: p, qty: 1, discountPct: 0, customPrice: channelPrice }];
     });
+  }
+
+  // Jika channel diganti, sesuaikan harga item di keranjang jika kasir belum mengubah manual
+  function handleChannelChange(newChannel: CustomerChannel) {
+    setChannel(newChannel);
+    const targetChannel = CHANNELS.find((c) => c.id === newChannel) || CHANNELS[0];
+    setCart((prev) =>
+      prev.map((it) => {
+        const base = it.product.sellPrice;
+        const newPrice =
+          targetChannel.markupPct > 0
+            ? Math.round((base * (1 + targetChannel.markupPct / 100)) / 100) * 100
+            : base;
+        return { ...it, customPrice: newPrice };
+      })
+    );
   }
 
   function updateQty(productId: string, delta: number) {
@@ -117,6 +169,22 @@ export function PosClient({
     });
   }
 
+  function updateItemDiscount(productId: string, discountPct: number) {
+    setCart((prev) =>
+      prev.map((it) =>
+        it.product.id === productId ? { ...it, discountPct: Math.max(0, Math.min(100, discountPct)) } : it
+      )
+    );
+  }
+
+  function updateItemPrice(productId: string, newPrice: number) {
+    setCart((prev) =>
+      prev.map((it) =>
+        it.product.id === productId ? { ...it, customPrice: Math.max(0, newPrice) } : it
+      )
+    );
+  }
+
   function removeItem(productId: string) {
     setCart((prev) => prev.filter((it) => it.product.id !== productId));
   }
@@ -124,20 +192,45 @@ export function PosClient({
   function resetOrder() {
     setCart([]);
     setTendered(0);
+    setExtraDiscountTotal(0);
     setError("");
   }
 
+  // Total Belanja sebelum diskon total
+  const rawSubtotal = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const price = item.customPrice ?? getProductPrice(item.product.sellPrice);
+      const lineRaw = price * item.qty;
+      const lineDisc = lineRaw * (item.discountPct / 100);
+      return sum + (lineRaw - lineDisc);
+    }, 0);
+  }, [cart, activeChannel]);
+
+  // Grand Total setelah diskon tambahan
+  const grandTotal = Math.max(0, rawSubtotal - (Number(extraDiscountTotal) || 0));
+
+  const totalDiscountAmount = useMemo(() => {
+    let itemDiscounts = 0;
+    for (const item of cart) {
+      const price = item.customPrice ?? getProductPrice(item.product.sellPrice);
+      itemDiscounts += price * item.qty * (item.discountPct / 100);
+    }
+    return itemDiscounts + (Number(extraDiscountTotal) || 0);
+  }, [cart, extraDiscountTotal, activeChannel]);
+
+  const change = Math.max(0, (tendered || 0) - grandTotal);
+
   // Preset Uang Pas & Uang Pecahan Cepat
   const quickCashOptions = useMemo(() => {
-    if (totalAmount <= 0) return [];
-    const base = [totalAmount];
+    if (grandTotal <= 0) return [];
+    const base = [grandTotal];
     const multiples = [10000, 20000, 50000, 100000];
     for (const m of multiples) {
-      const ceilVal = Math.ceil(totalAmount / m) * m;
+      const ceilVal = Math.ceil(grandTotal / m) * m;
       if (!base.includes(ceilVal)) base.push(ceilVal);
     }
     return base.sort((a, b) => a - b).slice(0, 4);
-  }, [totalAmount]);
+  }, [grandTotal]);
 
   async function handleCheckout() {
     if (cart.length === 0) return;
@@ -151,11 +244,14 @@ export function PosClient({
         body: JSON.stringify({
           cashAccountId: selectedCashId,
           paymentMethod,
-          tenderedAmount: paymentMethod === "Tunai" ? (tendered || totalAmount) : totalAmount,
+          tenderedAmount: paymentMethod === "Tunai" ? (tendered || grandTotal) : grandTotal,
+          channel: activeChannel.name,
+          extraDiscount: Number(extraDiscountTotal) || 0,
           items: cart.map((it) => ({
             productId: it.product.id,
             qty: it.qty,
-            unitPrice: it.product.sellPrice,
+            unitPrice: it.customPrice ?? getProductPrice(it.product.sellPrice),
+            discountPct: it.discountPct,
           })),
         }),
       });
@@ -169,14 +265,23 @@ export function PosClient({
 
       setCheckoutSuccess({
         invoiceNo: data.invoice.invoiceNo,
+        channelName: activeChannel.name,
+        subtotal: rawSubtotal,
+        discountTotal: totalDiscountAmount,
         grandTotal: data.invoice.grandTotal,
         tenderedAmount: data.invoice.tenderedAmount,
         changeAmount: data.invoice.changeAmount,
-        items: cart.map((it) => ({
-          name: it.product.name,
-          qty: it.qty,
-          total: it.product.sellPrice * it.qty,
-        })),
+        items: cart.map((it) => {
+          const price = it.customPrice ?? getProductPrice(it.product.sellPrice);
+          const lineNet = price * it.qty * (1 - it.discountPct / 100);
+          return {
+            name: it.product.name,
+            qty: it.qty,
+            unitPrice: price,
+            discountPct: it.discountPct,
+            total: lineNet,
+          };
+        }),
         date: new Date().toLocaleString("id-ID"),
       });
 
@@ -207,14 +312,38 @@ export function PosClient({
                 {company.name}
               </span>
             </div>
-            <p className="text-xs text-slate-500">Pilih menu, catat pembayaran &amp; potong stok otomatis</p>
+            <p className="text-xs text-slate-500">Pilih channel pelanggan, diskon, &amp; metode pembayaran</p>
           </div>
         </div>
 
+        {/* Tipe Pelanggan / Channel Selector */}
         <div className="flex items-center gap-2">
+          <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200">
+            <Users className="w-4 h-4 text-slate-500 ml-2 mr-1 hidden sm:block" />
+            <div className="flex gap-1">
+              {CHANNELS.map((ch) => (
+                <button
+                  key={ch.id}
+                  type="button"
+                  onClick={() => handleChannelChange(ch.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                    channel === ch.id
+                      ? "bg-white text-slate-900 shadow-xs border border-slate-200"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <span>{ch.badge}</span>
+                  {ch.markupPct > 0 && (
+                    <span className="text-[9px] text-blue-600 font-extrabold">+{ch.markupPct}%</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <Link
             href="/penjualan"
-            className="text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-xl transition"
+            className="text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-xl transition hidden md:block"
           >
             Riwayat Penjualan
           </Link>
@@ -225,6 +354,18 @@ export function PosClient({
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {/* Kolom Kiri: Katalog Menu / Produk */}
         <div className="flex-1 p-4 lg:p-6 overflow-y-auto space-y-4">
+          {/* Channel Info Banner jika channel ojol */}
+          {activeChannel.markupPct > 0 && (
+            <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs px-4 py-2.5 rounded-2xl flex items-center justify-between">
+              <span className="font-semibold">
+                Mode Harga: <strong>{activeChannel.name}</strong> (Otomatis penyesuaian harga +{activeChannel.markupPct}%)
+              </span>
+              <span className="text-[11px] bg-white px-2 py-0.5 rounded-lg border border-blue-200 font-bold">
+                Aktif
+              </span>
+            </div>
+          )}
+
           {/* Search + Category Filter */}
           <div className="space-y-3">
             <div className="relative">
@@ -272,6 +413,7 @@ export function PosClient({
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {filteredProducts.map((p) => {
               const inCart = cart.find((it) => it.product.id === p.id);
+              const price = getProductPrice(p.sellPrice);
               return (
                 <div
                   key={p.id}
@@ -294,9 +436,16 @@ export function PosClient({
                     </h3>
                   </div>
                   <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
-                    <span className="font-extrabold text-blue-600 text-sm">
-                      {fmtIDR(p.sellPrice)}
-                    </span>
+                    <div>
+                      <span className="font-extrabold text-blue-600 text-sm block">
+                        {fmtIDR(price)}
+                      </span>
+                      {activeChannel.markupPct > 0 && (
+                        <span className="text-[10px] text-slate-400 line-through">
+                          {fmtIDR(p.sellPrice)}
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
                       className="p-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100"
@@ -317,11 +466,11 @@ export function PosClient({
         </div>
 
         {/* Kolom Kanan: Panel Keranjang & Pembayaran Kasir */}
-        <div className="w-full lg:w-[400px] bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col shadow-lg z-10">
+        <div className="w-full lg:w-[420px] bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col shadow-lg z-10">
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ShoppingCart className="w-5 h-5 text-blue-600" />
-              <h2 className="font-bold text-slate-900 text-base">Pesanan</h2>
+              <h2 className="font-bold text-slate-900 text-base">Pesanan ({activeChannel.badge})</h2>
               <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-semibold">
                 {cart.reduce((s, it) => s + it.qty, 0)} item
               </span>
@@ -340,55 +489,85 @@ export function PosClient({
 
           {/* List Item Keranjang */}
           <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[35vh] lg:max-h-none">
-            {cart.map((it) => (
-              <div
-                key={it.product.id}
-                className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-50 border border-slate-100"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="font-bold text-slate-900 text-sm truncate">
-                    {it.product.name}
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    {fmtIDR(it.product.sellPrice)} / {it.product.unit}
-                  </div>
-                </div>
+            {cart.map((it) => {
+              const currentPrice = it.customPrice ?? getProductPrice(it.product.sellPrice);
+              const lineRaw = currentPrice * it.qty;
+              const lineNet = lineRaw * (1 - it.discountPct / 100);
 
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <div className="flex items-center border border-slate-200 bg-white rounded-lg">
+              return (
+                <div
+                  key={it.product.id}
+                  className="p-3 rounded-2xl bg-slate-50 border border-slate-100 space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-slate-900 text-sm truncate">
+                        {it.product.name}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        {fmtIDR(currentPrice)} / {it.product.unit}
+                      </div>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => updateQty(it.product.id, -1)}
-                      className="p-1.5 text-slate-500 hover:text-slate-800"
+                      onClick={() => removeItem(it.product.id)}
+                      className="p-1 text-slate-300 hover:text-rose-500"
+                      title="Hapus"
                     >
-                      <Minus className="w-3 h-3" />
-                    </button>
-                    <span className="w-7 text-center font-bold text-xs text-slate-800">
-                      {it.qty}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => updateQty(it.product.id, 1)}
-                      className="p-1.5 text-slate-500 hover:text-slate-800"
-                    >
-                      <Plus className="w-3 h-3" />
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
 
-                  <span className="font-bold text-sm text-slate-900 w-20 text-right">
-                    {fmtIDR(it.product.sellPrice * it.qty)}
-                  </span>
+                  {/* Kontrol Qty, Diskon Item (%), dan Total Line */}
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                    <div className="flex items-center border border-slate-200 bg-white rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => updateQty(it.product.id, -1)}
+                        className="p-1.5 text-slate-500 hover:text-slate-800"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="w-7 text-center font-bold text-xs text-slate-800">
+                        {it.qty}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateQty(it.product.id, 1)}
+                        className="p-1.5 text-slate-500 hover:text-slate-800"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
 
-                  <button
-                    type="button"
-                    onClick={() => removeItem(it.product.id)}
-                    className="p-1 text-slate-300 hover:text-rose-500"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                    {/* Diskon Item (%) */}
+                    <div className="flex items-center gap-1">
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={it.discountPct || ""}
+                          onChange={(e) => updateItemDiscount(it.product.id, Number(e.target.value))}
+                          placeholder="0"
+                          className="w-14 pl-2 pr-5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-right"
+                        />
+                        <Percent className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      {it.discountPct > 0 && (
+                        <span className="text-[10px] text-slate-400 line-through block">
+                          {fmtIDR(lineRaw)}
+                        </span>
+                      )}
+                      <span className="font-bold text-sm text-slate-900">{fmtIDR(lineNet)}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {cart.length === 0 && (
               <div className="h-44 flex flex-col items-center justify-center text-slate-400 text-sm">
@@ -443,6 +622,24 @@ export function PosClient({
               </div>
             </div>
 
+            {/* Diskon Tambahan / Voucher Kasir */}
+            {cart.length > 0 && (
+              <div className="flex items-center justify-between gap-2 p-2 bg-white rounded-xl border border-slate-200 text-xs">
+                <div className="flex items-center gap-1.5 text-slate-600 font-semibold">
+                  <Tag className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Potongan / Diskon (Rp)</span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  value={extraDiscountTotal || ""}
+                  onChange={(e) => setExtraDiscountTotal(Number(e.target.value))}
+                  placeholder="0"
+                  className="w-28 px-2 py-1 border border-slate-300 rounded-lg font-bold text-right text-xs"
+                />
+              </div>
+            )}
+
             {/* Input Uang Diterima (Jika Tunai) */}
             {paymentMethod === "Tunai" && cart.length > 0 && (
               <div className="space-y-1.5">
@@ -461,7 +658,7 @@ export function PosClient({
                           : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
                       }`}
                     >
-                      {amt === totalAmount ? "Uang Pas" : fmtIDR(amt)}
+                      {amt === grandTotal ? "Uang Pas" : fmtIDR(amt)}
                     </button>
                   ))}
                 </div>
@@ -469,7 +666,7 @@ export function PosClient({
                   type="number"
                   value={tendered || ""}
                   onChange={(e) => setTendered(Number(e.target.value))}
-                  placeholder={`Min. ${totalAmount}`}
+                  placeholder={`Min. ${grandTotal}`}
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold text-right"
                 />
               </div>
@@ -477,11 +674,17 @@ export function PosClient({
 
             {/* Total Ringkasan */}
             <div className="space-y-1 pt-2 border-t border-slate-200">
+              {totalDiscountAmount > 0 && (
+                <div className="flex justify-between items-center text-xs font-semibold text-rose-600">
+                  <span>Total Potongan</span>
+                  <span>- {fmtIDR(totalDiscountAmount)}</span>
+                </div>
+              )}
               <div className="flex justify-between items-center text-sm font-bold text-slate-900">
                 <span>Total Tagihan</span>
-                <span className="text-xl text-blue-600 font-extrabold">{fmtIDR(totalAmount)}</span>
+                <span className="text-xl text-blue-600 font-extrabold">{fmtIDR(grandTotal)}</span>
               </div>
-              {paymentMethod === "Tunai" && tendered > totalAmount && (
+              {paymentMethod === "Tunai" && tendered > grandTotal && (
                 <div className="flex justify-between items-center text-xs font-semibold text-emerald-600">
                   <span>Kembalian</span>
                   <span>{fmtIDR(change)}</span>
@@ -492,11 +695,11 @@ export function PosClient({
             {/* Tombol Selesaikan Transaksi */}
             <button
               type="button"
-              disabled={loading || cart.length === 0 || (paymentMethod === "Tunai" && tendered > 0 && tendered < totalAmount)}
+              disabled={loading || cart.length === 0 || (paymentMethod === "Tunai" && tendered > 0 && tendered < grandTotal)}
               onClick={handleCheckout}
               className="w-full py-3.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md active:scale-[0.99] transition disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {loading ? "Memproses..." : `Bayar & Cetak Struk (${fmtIDR(totalAmount)})`}
+              {loading ? "Memproses..." : `Bayar & Cetak Struk (${fmtIDR(grandTotal)})`}
             </button>
           </div>
         </div>
@@ -519,22 +722,35 @@ export function PosClient({
               <div className="text-center pb-2 border-b border-slate-200">
                 <div className="font-bold text-sm">{company.name}</div>
                 <div>{company.address || "Jl. Raya No. 1"}</div>
-                <div>{checkoutSuccess.date}</div>
+                <div className="mt-1 text-[11px] text-blue-600 font-bold uppercase tracking-wider">
+                  [{checkoutSuccess.channelName}]
+                </div>
+                <div className="text-[10px] text-slate-400">{checkoutSuccess.date}</div>
               </div>
 
               <div className="divide-y divide-slate-100 py-1">
                 {checkoutSuccess.items.map((it, idx) => (
-                  <div key={idx} className="py-1 flex justify-between">
-                    <span>
-                      {it.name} x{it.qty}
-                    </span>
-                    <span>{fmtIDR(it.total)}</span>
+                  <div key={idx} className="py-1">
+                    <div className="flex justify-between">
+                      <span>{it.name}</span>
+                      <span>{fmtIDR(it.total)}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {it.qty} x {fmtIDR(it.unitPrice)}
+                      {it.discountPct > 0 ? ` (Disc ${it.discountPct}%)` : ""}
+                    </div>
                   </div>
                 ))}
               </div>
 
               <div className="pt-2 border-t border-slate-200 space-y-1">
-                <div className="flex justify-between font-bold">
+                {checkoutSuccess.discountTotal > 0 && (
+                  <div className="flex justify-between text-rose-600">
+                    <span>Diskon</span>
+                    <span>- {fmtIDR(checkoutSuccess.discountTotal)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-bold text-sm">
                   <span>Total</span>
                   <span>{fmtIDR(checkoutSuccess.grandTotal)}</span>
                 </div>

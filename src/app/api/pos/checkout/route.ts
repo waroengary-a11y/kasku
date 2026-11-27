@@ -21,6 +21,8 @@ export async function POST(req: Request) {
       items,
       cashAccountId,
       paymentMethod = "Tunai",
+      channel = "Offline / Dine In",
+      extraDiscount = 0,
       notes,
       tenderedAmount = 0,
     } = body as {
@@ -28,6 +30,8 @@ export async function POST(req: Request) {
       items: PosItemInput[];
       cashAccountId: string;
       paymentMethod?: string;
+      channel?: string;
+      extraDiscount?: number;
       notes?: string;
       tenderedAmount?: number;
     };
@@ -130,7 +134,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Item yang dipilih tidak valid." }, { status: 400 });
     }
 
-    const grandTotal = subtotal;
+    const totalDisc = discountTotal + (Number(extraDiscount) || 0);
+    const grandTotal = Math.max(0, subtotal - (Number(extraDiscount) || 0));
     const now = new Date();
 
     // 4. Nomor Invoice & Payment
@@ -143,7 +148,7 @@ export async function POST(req: Request) {
     const journal = await createBalancedJournal({
       companyId: session.companyId,
       transDate: now,
-      memo: `Kasir POS ${invoiceNo} (${paymentMethod})`,
+      memo: `Kasir [${channel}] ${invoiceNo} (${paymentMethod})`,
       sourceType: "SALE",
       lines: [
         {
@@ -173,13 +178,13 @@ export async function POST(req: Request) {
         dueDate: now,
         status: "PAID",
         subtotal,
-        discountTotal,
+        discountTotal: totalDisc,
         taxTotal: 0,
         grandTotal,
         paidAmount: grandTotal,
         balanceDue: 0,
         journalEntryId: journal.id,
-        notes: notes ? `[Kasir POS - ${paymentMethod}] ${notes}` : `[Kasir POS - ${paymentMethod}]`,
+        notes: notes ? `[Kasir ${channel} - ${paymentMethod}] ${notes}` : `[Kasir ${channel} - ${paymentMethod}]`,
         items: {
           create: processedItems.map((p) => ({
             productId: p.productId,
