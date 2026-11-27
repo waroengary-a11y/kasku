@@ -125,10 +125,10 @@ export const DEFAULT_SCHEMES: CalcScheme[] = [
 
 export const DEFAULT_CHANNEL_SETTINGS: ChannelSettingsPayload = {
   channels: [
-    { channelId: "offline",    commissionPct: 0,  fixedFeePerOrder: 0, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_B_ID, markupPct: 0 },
-    { channelId: "gofood",     commissionPct: 20, fixedFeePerOrder: 0, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
-    { channelId: "grabfood",   commissionPct: 20, fixedFeePerOrder: 0, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
-    { channelId: "shopeefood", commissionPct: 20, fixedFeePerOrder: 0, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
+    { channelId: "offline",    commissionPct: 0,  fixedFeePerOrder: 0,    commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_B_ID, markupPct: 0 },
+    { channelId: "gofood",     commissionPct: 20, fixedFeePerOrder: 1000, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
+    { channelId: "grabfood",   commissionPct: 20, fixedFeePerOrder: 1000, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
+    { channelId: "shopeefood", commissionPct: 20, fixedFeePerOrder: 1000, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
   ],
   schemes: DEFAULT_SCHEMES,
   productPrices: [],
