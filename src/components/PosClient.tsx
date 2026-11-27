@@ -17,7 +17,10 @@ import {
   Users,
 } from "lucide-react";
 
-import { PromoSettingsPayload, DEFAULT_PROMO_SETTINGS } from "@/lib/promo-types";
+import {
+  ChannelSettingsPayload, DEFAULT_CHANNEL_SETTINGS, ChannelId,
+  CHANNEL_META, CHANNEL_IDS, getProductPriceForChannel,
+} from "@/lib/channel-settings";
 
 interface ProductItem {
   id: string;
@@ -25,6 +28,7 @@ interface ProductItem {
   name: string;
   unit: string;
   sellPrice: number;
+  buyPrice: number;
   categoryId: string | null;
   categoryName: string;
 }
@@ -34,7 +38,6 @@ interface CartItem {
   qty: number;
   discountPct: number;
   customPrice?: number; // Override harga jika diubah kasir
-  strikePrice?: number; // Harga coret promo
 }
 
 interface CashAccount {
@@ -43,23 +46,7 @@ interface CashAccount {
   balance: number;
 }
 
-// Tipe Pelanggan / Channel Penjualan
-export type CustomerChannel = "offline" | "gofood" | "grabfood" | "shopeefood";
-
-export interface ChannelConfig {
-  id: CustomerChannel;
-  name: string;
-  badge: string;
-  markupPct: number; // Persentase markup harga online (misal +20% untuk ojol)
-  colorCls: string;
-}
-
-const CHANNELS: ChannelConfig[] = [
-  { id: "offline", name: "Offline / Dine In", badge: "Dine In", markupPct: 0, colorCls: "bg-slate-100 text-slate-800 border-slate-300" },
-  { id: "gofood", name: "GoFood", badge: "GoFood", markupPct: 20, colorCls: "bg-red-50 text-red-700 border-red-200" },
-  { id: "grabfood", name: "GrabFood", badge: "GrabFood", markupPct: 20, colorCls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  { id: "shopeefood", name: "ShopeeFood", badge: "ShopeeFood", markupPct: 20, colorCls: "bg-amber-50 text-amber-700 border-amber-200" },
-];
+export type CustomerChannel = ChannelId;
 
 const fmtIDR = (n: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -73,24 +60,23 @@ export function PosClient({
   products,
   categories,
   cashAccounts,
-  initialPromoSettings,
+  initialChannelSettings,
 }: {
   company: { name: string; address: string | null; phone: string | null };
   products: ProductItem[];
   categories: { id: string; name: string }[];
   cashAccounts: CashAccount[];
-  initialPromoSettings?: PromoSettingsPayload;
+  initialChannelSettings?: ChannelSettingsPayload;
 }) {
-  const promoSettings = initialPromoSettings || DEFAULT_PROMO_SETTINGS;
-  const channelsList = promoSettings.channels.length > 0 ? promoSettings.channels : CHANNELS;
+  const channelSettings = initialChannelSettings ?? DEFAULT_CHANNEL_SETTINGS;
 
-  const [channel, setChannel] = useState<CustomerChannel>("offline");
+  const [channel, setChannel] = useState<ChannelId>("offline");
   const [selectedCat, setSelectedCat] = useState("all");
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedCashId, setSelectedCashId] = useState(cashAccounts[0]?.id || "");
   const [paymentMethod, setPaymentMethod] = useState("Tunai");
-  const [extraDiscountTotal, setExtraDiscountTotal] = useState<number>(0); // Diskon manual
+  const [extraDiscountTotal, setExtraDiscountTotal] = useState<number>(0);
   const [tendered, setTendered] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -106,32 +92,21 @@ export function PosClient({
     date: string;
   } | null>(null);
 
-  // Ambil info konfigurasi channel aktif dari pengaturan promo
-  const activeChannel = useMemo(
-    () => channelsList.find((c) => c.id === channel) || channelsList[0],
-    [channelsList, channel]
+  const activeChannelCfg = useMemo(
+    () => channelSettings.channels.find((c) => c.channelId === channel) ?? channelSettings.channels[0],
+    [channelSettings, channel]
   );
+  const activeChannelMeta = CHANNEL_META[channel];
 
   // Fungsi kalkulasi harga produk berdasarkan channel & diskon coret
   const getProductPriceInfo = (p: ProductItem) => {
-    const hasStrike = typeof promoSettings.strikePromos[p.id] === "number" && promoSettings.strikePromos[p.id] > 0;
-    const baseEffectivePrice = hasStrike ? promoSettings.strikePromos[p.id] : p.sellPrice;
-
-    if (activeChannel.markupPct <= 0) {
-      return {
-        price: baseEffectivePrice,
-        originalPrice: p.sellPrice,
-        hasPromoStrike: hasStrike,
-      };
-    }
-
-    const markedEffective = Math.round((baseEffectivePrice * (1 + activeChannel.markupPct / 100)) / 100) * 100;
-    const markedOriginal = Math.round((p.sellPrice * (1 + activeChannel.markupPct / 100)) / 100) * 100;
-
+    const channelPrice = getProductPriceForChannel(p.sellPrice, p.id, channel, channelSettings);
+    const strikePrice = channelSettings.strikePromos[p.id];
+    const hasPromoStrike = typeof strikePrice === "number" && strikePrice > 0;
     return {
-      price: markedEffective,
-      originalPrice: markedOriginal,
-      hasPromoStrike: hasStrike,
+      price: hasPromoStrike ? strikePrice : channelPrice,
+      originalPrice: channelPrice,
+      hasPromoStrike,
     };
   };
 
@@ -164,18 +139,12 @@ export function PosClient({
     });
   }
 
-  // Jika channel diganti, sesuaikan harga item di keranjang jika kasir belum mengubah manual
-  function handleChannelChange(newChannel: CustomerChannel) {
+  // Jika channel diganti, sesuaikan harga item di keranjang
+  function handleChannelChange(newChannel: ChannelId) {
     setChannel(newChannel);
-    const targetChannel = channelsList.find((c) => c.id === newChannel) || channelsList[0];
     setCart((prev) =>
       prev.map((it) => {
-        const hasStrike = typeof promoSettings.strikePromos[it.product.id] === "number" && promoSettings.strikePromos[it.product.id] > 0;
-        const base = hasStrike ? promoSettings.strikePromos[it.product.id] : it.product.sellPrice;
-        const newPrice =
-          targetChannel.markupPct > 0
-            ? Math.round((base * (1 + targetChannel.markupPct / 100)) / 100) * 100
-            : base;
+        const newPrice = getProductPriceForChannel(it.product.sellPrice, it.product.id, newChannel, channelSettings);
         return { ...it, customPrice: newPrice };
       })
     );
@@ -230,18 +199,12 @@ export function PosClient({
       const lineDisc = lineRaw * (item.discountPct / 100);
       return sum + (lineRaw - lineDisc);
     }, 0);
-  }, [cart, activeChannel]);
+  }, [cart, activeChannelCfg]);
 
   // Otomatis diskon total belanja jika promo bill aktif
   const autoBillDiscount = useMemo(() => {
-    if (!promoSettings.billPromo.active || rawSubtotal < promoSettings.billPromo.minSpend) {
-      return 0;
-    }
-    if (promoSettings.billPromo.discountType === "pct") {
-      return Math.round((rawSubtotal * promoSettings.billPromo.discountValue) / 100);
-    }
-    return Math.min(rawSubtotal, promoSettings.billPromo.discountValue);
-  }, [rawSubtotal, promoSettings.billPromo]);
+    return 0; // Bill promo kini dikelola dari program promo di channel settings
+  }, [rawSubtotal]);
 
   // Grand Total setelah diskon otomatis & diskon manual
   const grandTotal = Math.max(0, rawSubtotal - autoBillDiscount - (Number(extraDiscountTotal) || 0));
@@ -253,7 +216,7 @@ export function PosClient({
       itemDiscounts += price * item.qty * (item.discountPct / 100);
     }
     return itemDiscounts + autoBillDiscount + (Number(extraDiscountTotal) || 0);
-  }, [cart, autoBillDiscount, extraDiscountTotal, activeChannel]);
+  }, [cart, autoBillDiscount, extraDiscountTotal, activeChannelCfg]);
 
   const change = Math.max(0, (tendered || 0) - grandTotal);
 
@@ -282,7 +245,7 @@ export function PosClient({
           cashAccountId: selectedCashId,
           paymentMethod,
           tenderedAmount: paymentMethod === "Tunai" ? (tendered || grandTotal) : grandTotal,
-          channel: activeChannel.name,
+          channel: CHANNEL_META[channel].name,
           extraDiscount: Number(extraDiscountTotal) || 0,
           items: cart.map((it) => ({
             productId: it.product.id,
@@ -302,7 +265,7 @@ export function PosClient({
 
       setCheckoutSuccess({
         invoiceNo: data.invoice.invoiceNo,
-        channelName: activeChannel.name,
+        channelName: CHANNEL_META[channel].name,
         subtotal: rawSubtotal,
         discountTotal: totalDiscountAmount,
         grandTotal: data.invoice.grandTotal,
@@ -358,23 +321,27 @@ export function PosClient({
           <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200">
             <Users className="w-4 h-4 text-slate-500 ml-2 mr-1 hidden sm:block" />
             <div className="flex gap-1">
-              {CHANNELS.map((ch) => (
-                <button
-                  key={ch.id}
-                  type="button"
-                  onClick={() => handleChannelChange(ch.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
-                    channel === ch.id
-                      ? "bg-white text-slate-900 shadow-xs border border-slate-200"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  <span>{ch.badge}</span>
-                  {ch.markupPct > 0 && (
-                    <span className="text-[9px] text-blue-600 font-extrabold">+{ch.markupPct}%</span>
-                  )}
-                </button>
-              ))}
+              {CHANNEL_IDS.map((cid) => {
+                const meta = CHANNEL_META[cid];
+                const cfg = channelSettings.channels.find((c) => c.channelId === cid);
+                return (
+                  <button
+                    key={cid}
+                    type="button"
+                    onClick={() => handleChannelChange(cid)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                      channel === cid
+                        ? "bg-white text-slate-900 shadow-xs border border-slate-200"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <span>{meta.emoji} {meta.badge}</span>
+                    {cfg && cfg.commissionPct > 0 && (
+                      <span className="text-[9px] text-rose-600 font-extrabold">-{cfg.commissionPct}%</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -392,14 +359,15 @@ export function PosClient({
         {/* Kolom Kiri: Katalog Menu / Produk */}
         <div className="flex-1 p-4 lg:p-6 overflow-y-auto space-y-4">
           {/* Channel Info Banner jika channel ojol */}
-          {activeChannel.markupPct > 0 && (
+          {activeChannelCfg && (activeChannelCfg.commissionPct > 0 || activeChannelCfg.markupPct > 0) && (
             <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs px-4 py-2.5 rounded-2xl flex items-center justify-between">
               <span className="font-semibold">
-                Mode Harga: <strong>{activeChannel.name}</strong> (Otomatis penyesuaian harga +{activeChannel.markupPct}%)
+                Mode: <strong>{CHANNEL_META[channel].name}</strong>
+                {activeChannelCfg.markupPct > 0 && ` · Markup +${activeChannelCfg.markupPct}%`}
+                {activeChannelCfg.commissionPct > 0 && ` · Komisi ${activeChannelCfg.commissionPct}%`}
+                {activeChannelCfg.fixedFeePerOrder > 0 && ` + Rp ${activeChannelCfg.fixedFeePerOrder.toLocaleString("id-ID")}/order`}
               </span>
-              <span className="text-[11px] bg-white px-2 py-0.5 rounded-lg border border-blue-200 font-bold">
-                Aktif
-              </span>
+              <span className="text-[11px] bg-white px-2 py-0.5 rounded-lg border border-blue-200 font-bold">Aktif</span>
             </div>
           )}
 
@@ -486,7 +454,7 @@ export function PosClient({
                         <span className="text-[10px] text-slate-400 line-through block">
                           {fmtIDR(priceInfo.originalPrice)}
                         </span>
-                      ) : activeChannel.markupPct > 0 ? (
+                      ) : activeChannelCfg.markupPct > 0 ? (
                         <span className="text-[10px] text-slate-400 line-through block">
                           {fmtIDR(p.sellPrice)}
                         </span>
@@ -516,7 +484,7 @@ export function PosClient({
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ShoppingCart className="w-5 h-5 text-blue-600" />
-              <h2 className="font-bold text-slate-900 text-base">Pesanan ({activeChannel.badge})</h2>
+              <h2 className="font-bold text-slate-900 text-base">Pesanan ({CHANNEL_META[channel].badge})</h2>
               <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-semibold">
                 {cart.reduce((s, it) => s + it.qty, 0)} item
               </span>
@@ -671,7 +639,7 @@ export function PosClient({
             {/* Diskon Otomatis Total Belanja jika aktif */}
             {autoBillDiscount > 0 && (
               <div className="flex items-center justify-between p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
-                <span className="font-semibold">Promo Min. Belanja {fmtIDR(promoSettings.billPromo.minSpend)}</span>
+                <span className="font-semibold">Promo Min. Belanja</span>
                 <span className="font-extrabold">- {fmtIDR(autoBillDiscount)}</span>
               </div>
             )}

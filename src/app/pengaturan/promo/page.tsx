@@ -1,31 +1,32 @@
 import { requirePageSession } from "@/lib/require-page-session";
 import { prisma } from "@/lib/prisma";
-import { AppShell } from "@/components/AppShell";
-import { PromoSettingsClient } from "@/components/PromoSettingsClient";
-import { getCompanyPromoSettings } from "@/lib/promo-settings";
+import { getChannelSettings } from "@/lib/channel-settings-server";
+import { ChannelSettingsClient } from "@/components/ChannelSettingsClient";
 
-export default async function PromoPage() {
-  const { session, company } = await requirePageSession();
+export default async function PengaturanPromoPage() {
+  const { company } = await requirePageSession();
 
-  const [products, promoSettings] = await Promise.all([
+  const [products, settings] = await Promise.all([
     prisma.product.findMany({
       where: { companyId: company.id, isSold: true },
-      select: { id: true, name: true, sku: true, unit: true, sellPrice: true },
+      include: { category: true },
       orderBy: { name: "asc" },
     }),
-    getCompanyPromoSettings(company.id),
+    getChannelSettings(company.id),
   ]);
 
   return (
-    <AppShell
-      companyName={company.name}
-      userName={session.name}
-      isDemo={company.isDemo}
-    >
-      <PromoSettingsClient
-        initialSettings={promoSettings}
-        products={products.map((p) => ({ ...p, sellPrice: Number(p.sellPrice) }))}
-      />
-    </AppShell>
+    <ChannelSettingsClient
+      initialSettings={settings}
+      products={products.map((p) => ({
+        id: p.id,
+        sku: p.sku,
+        name: p.name,
+        unit: p.unit,
+        sellPrice: Number(p.sellPrice),
+        buyPrice: Number(p.buyPrice),
+        categoryName: p.category?.name ?? "Lainnya",
+      }))}
+    />
   );
 }
