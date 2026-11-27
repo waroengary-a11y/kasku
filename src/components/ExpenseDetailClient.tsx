@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ArrowLeft, Pencil, Printer, Trash2 } from "lucide-react";
 import { CurrencyInput } from "@/components/CurrencyInput";
 
@@ -59,10 +59,6 @@ export function ExpenseDetailClient({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    setAmount(String(Math.round(balanceDue)));
-  }, [balanceDue]);
-
   async function handlePay(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -85,7 +81,7 @@ export function ExpenseDetailClient({
   }
 
   async function handleDelete() {
-    if (!confirm("Hapus catatan biaya ini beserta jurnalnya?")) return;
+    if (!confirm("Hapus biaya ini? Transaksi dan jurnal pengeluaran akan dibatalkan, dan dana akan kembali ke akun kas/bank asal.")) return;
     const res = await fetch(`/api/expenses/${expense.id}`, { method: "DELETE" });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -135,23 +131,21 @@ export function ExpenseDetailClient({
             Print
           </button>
           {expense.paidAmount === 0 && (
-            <>
-              <Link
-                href={`/biaya/${expense.id}/edit`}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white border border-slate-300 text-sm text-slate-700 hover:bg-slate-50"
-              >
-                <Pencil className="w-4 h-4" />
-                Edit
-              </Link>
-              <button
-                onClick={handleDelete}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 hover:bg-red-100"
-              >
-                <Trash2 className="w-4 h-4" />
-                Hapus
-              </button>
-            </>
+            <Link
+              href={`/biaya/${expense.id}/edit`}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white border border-slate-300 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              <Pencil className="w-4 h-4" />
+              Edit
+            </Link>
           )}
+          <button
+            onClick={handleDelete}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 hover:bg-red-100"
+          >
+            <Trash2 className="w-4 h-4" />
+            Hapus
+          </button>
         </div>
       </div>
 

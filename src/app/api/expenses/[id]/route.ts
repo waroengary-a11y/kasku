@@ -117,19 +117,34 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
 
-  const existing = await prisma.expense.findFirst({ where: { id, companyId: session.companyId } });
+  const existing = await prisma.expense.findFirst({
+    where: { id, companyId: session.companyId },
+    include: { items: true },
+  });
   if (!existing) return NextResponse.json({ error: "Biaya tidak ditemukan." }, { status: 404 });
-  if (Number(existing.paidAmount) > 0 && existing.status === "PAID") {
-    // Allow delete only if no payment allocations exist (i.e. not paid via separate payment)
-    const allocs = await prisma.paymentAllocation.count({ where: { targetType: "EXPENSE", targetId: id } });
-    if (allocs > 0) {
-      return NextResponse.json({ error: "Biaya sudah memiliki riwayat pembayaran." }, { status: 400 });
+
+  // Cari semua alokasi pembayaran terpisah untuk biaya ini jika ada
+  const allocs = await prisma.paymentAllocation.findMany({
+    where: { targetType: "EXPENSE", targetId: id },
+    include: { payment: true },
+  });
+
+  // Hapus semua payment terkait beserta jurnal payment-nya (jika ada pelunasan kas/bank terpisah)
+  for (const alloc of allocs) {
+    if (alloc.payment.journalEntryId) {
+      await prisma.journalEntry.deleteMany({ where: { id: alloc.payment.journalEntryId } });
     }
+    await prisma.payment.deleteMany({ where: { id: alloc.paymentId } });
   }
 
+  // Hapus jurnal biaya utama (ini otomatis membalikkan saldo akun Kas/Bank atau Utang Biaya yang didebit/dikredit saat biaya dibuat)
   if (existing.journalEntryId) {
-    await prisma.journalEntry.delete({ where: { id: existing.journalEntryId } });
+    await prisma.journalEntry.deleteMany({ where: { id: existing.journalEntryId } });
   }
+
+  // Hapus item biaya & transaksi biaya itu sendiri
+  await prisma.expenseItem.deleteMany({ where: { expenseId: id } });
   await prisma.expense.delete({ where: { id } });
+
   return NextResponse.json({ ok: true });
 }
