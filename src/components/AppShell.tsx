@@ -28,6 +28,7 @@ import {
   Building2,
   Users,
   Settings,
+  Tag,
 } from "lucide-react";
 import {
   IconBeranda,
@@ -92,6 +93,7 @@ function getBreadcrumbLabel(pathname: string) {
   if (pathname.startsWith("/jurnal")) return "Jurnal Umum";
   if (pathname.startsWith("/kontak")) return "Kontak";
   if (pathname.startsWith("/laporan")) return "Laporan";
+  if (pathname.startsWith("/pengaturan/promo")) return "Pengaturan Promo";
   if (pathname.startsWith("/pengaturan")) return "Pengaturan";
   return "KASKU";
 }
@@ -509,6 +511,20 @@ export function AppShell({ companyName, userName, isDemo, children }: AppShellPr
               >
                 <Users size={19} className={pathname.startsWith("/kontak") ? "text-yellow-300" : "text-white"} />
                 <span>Kontak</span>
+              </Link>
+
+              {/* Pengaturan Promo */}
+              <Link
+                href="/pengaturan/promo"
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-3.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition ${
+                  pathname.startsWith("/pengaturan/promo")
+                    ? "text-yellow-300 font-bold"
+                    : "text-white/90 hover:text-white hover:bg-white/10"
+                }`}
+              >
+                <Tag size={19} className={pathname.startsWith("/pengaturan/promo") ? "text-yellow-300" : "text-white"} />
+                <span>Pengaturan Promo</span>
               </Link>
 
               {/* Pengaturan */}

@@ -17,6 +17,8 @@ import {
   Users,
 } from "lucide-react";
 
+import { PromoSettingsPayload, DEFAULT_PROMO_SETTINGS } from "@/lib/promo-settings";
+
 interface ProductItem {
   id: string;
   sku: string;
@@ -32,6 +34,7 @@ interface CartItem {
   qty: number;
   discountPct: number;
   customPrice?: number; // Override harga jika diubah kasir
+  strikePrice?: number; // Harga coret promo
 }
 
 interface CashAccount {
@@ -70,19 +73,24 @@ export function PosClient({
   products,
   categories,
   cashAccounts,
+  initialPromoSettings,
 }: {
   company: { name: string; address: string | null; phone: string | null };
   products: ProductItem[];
   categories: { id: string; name: string }[];
   cashAccounts: CashAccount[];
+  initialPromoSettings?: PromoSettingsPayload;
 }) {
+  const promoSettings = initialPromoSettings || DEFAULT_PROMO_SETTINGS;
+  const channelsList = promoSettings.channels.length > 0 ? promoSettings.channels : CHANNELS;
+
   const [channel, setChannel] = useState<CustomerChannel>("offline");
   const [selectedCat, setSelectedCat] = useState("all");
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedCashId, setSelectedCashId] = useState(cashAccounts[0]?.id || "");
   const [paymentMethod, setPaymentMethod] = useState("Tunai");
-  const [extraDiscountTotal, setExtraDiscountTotal] = useState<number>(0); // Diskon total transaksi (Rp)
+  const [extraDiscountTotal, setExtraDiscountTotal] = useState<number>(0); // Diskon manual
   const [tendered, setTendered] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -98,19 +106,36 @@ export function PosClient({
     date: string;
   } | null>(null);
 
-  // Ambil info konfigurasi channel aktif
+  // Ambil info konfigurasi channel aktif dari pengaturan promo
   const activeChannel = useMemo(
-    () => CHANNELS.find((c) => c.id === channel) || CHANNELS[0],
-    [channel]
+    () => channelsList.find((c) => c.id === channel) || channelsList[0],
+    [channelsList, channel]
   );
 
-  // Fungsi kalkulasi harga produk berdasarkan channel
-  const getProductPrice = (basePrice: number) => {
-    if (activeChannel.markupPct <= 0) return basePrice;
-    // Otomatis markup dan bulatkan ke ratusan terdekat
-    const marked = basePrice * (1 + activeChannel.markupPct / 100);
-    return Math.round(marked / 100) * 100;
+  // Fungsi kalkulasi harga produk berdasarkan channel & diskon coret
+  const getProductPriceInfo = (p: ProductItem) => {
+    const hasStrike = typeof promoSettings.strikePromos[p.id] === "number" && promoSettings.strikePromos[p.id] > 0;
+    const baseEffectivePrice = hasStrike ? promoSettings.strikePromos[p.id] : p.sellPrice;
+
+    if (activeChannel.markupPct <= 0) {
+      return {
+        price: baseEffectivePrice,
+        originalPrice: p.sellPrice,
+        hasPromoStrike: hasStrike,
+      };
+    }
+
+    const markedEffective = Math.round((baseEffectivePrice * (1 + activeChannel.markupPct / 100)) / 100) * 100;
+    const markedOriginal = Math.round((p.sellPrice * (1 + activeChannel.markupPct / 100)) / 100) * 100;
+
+    return {
+      price: markedEffective,
+      originalPrice: markedOriginal,
+      hasPromoStrike: hasStrike,
+    };
   };
+
+  const getProductPrice = (p: ProductItem) => getProductPriceInfo(p).price;
 
   // Filter Produk
   const filteredProducts = useMemo(() => {
@@ -127,7 +152,7 @@ export function PosClient({
 
   // Cart operations
   function addToCart(p: ProductItem) {
-    const channelPrice = getProductPrice(p.sellPrice);
+    const channelPrice = getProductPrice(p);
     setCart((prev) => {
       const existing = prev.find((it) => it.product.id === p.id);
       if (existing) {
@@ -142,10 +167,11 @@ export function PosClient({
   // Jika channel diganti, sesuaikan harga item di keranjang jika kasir belum mengubah manual
   function handleChannelChange(newChannel: CustomerChannel) {
     setChannel(newChannel);
-    const targetChannel = CHANNELS.find((c) => c.id === newChannel) || CHANNELS[0];
+    const targetChannel = channelsList.find((c) => c.id === newChannel) || channelsList[0];
     setCart((prev) =>
       prev.map((it) => {
-        const base = it.product.sellPrice;
+        const hasStrike = typeof promoSettings.strikePromos[it.product.id] === "number" && promoSettings.strikePromos[it.product.id] > 0;
+        const base = hasStrike ? promoSettings.strikePromos[it.product.id] : it.product.sellPrice;
         const newPrice =
           targetChannel.markupPct > 0
             ? Math.round((base * (1 + targetChannel.markupPct / 100)) / 100) * 100
@@ -199,24 +225,35 @@ export function PosClient({
   // Total Belanja sebelum diskon total
   const rawSubtotal = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const price = item.customPrice ?? getProductPrice(item.product.sellPrice);
+      const price = item.customPrice ?? getProductPrice(item.product);
       const lineRaw = price * item.qty;
       const lineDisc = lineRaw * (item.discountPct / 100);
       return sum + (lineRaw - lineDisc);
     }, 0);
   }, [cart, activeChannel]);
 
-  // Grand Total setelah diskon tambahan
-  const grandTotal = Math.max(0, rawSubtotal - (Number(extraDiscountTotal) || 0));
+  // Otomatis diskon total belanja jika promo bill aktif
+  const autoBillDiscount = useMemo(() => {
+    if (!promoSettings.billPromo.active || rawSubtotal < promoSettings.billPromo.minSpend) {
+      return 0;
+    }
+    if (promoSettings.billPromo.discountType === "pct") {
+      return Math.round((rawSubtotal * promoSettings.billPromo.discountValue) / 100);
+    }
+    return Math.min(rawSubtotal, promoSettings.billPromo.discountValue);
+  }, [rawSubtotal, promoSettings.billPromo]);
+
+  // Grand Total setelah diskon otomatis & diskon manual
+  const grandTotal = Math.max(0, rawSubtotal - autoBillDiscount - (Number(extraDiscountTotal) || 0));
 
   const totalDiscountAmount = useMemo(() => {
     let itemDiscounts = 0;
     for (const item of cart) {
-      const price = item.customPrice ?? getProductPrice(item.product.sellPrice);
+      const price = item.customPrice ?? getProductPrice(item.product);
       itemDiscounts += price * item.qty * (item.discountPct / 100);
     }
-    return itemDiscounts + (Number(extraDiscountTotal) || 0);
-  }, [cart, extraDiscountTotal, activeChannel]);
+    return itemDiscounts + autoBillDiscount + (Number(extraDiscountTotal) || 0);
+  }, [cart, autoBillDiscount, extraDiscountTotal, activeChannel]);
 
   const change = Math.max(0, (tendered || 0) - grandTotal);
 
@@ -250,7 +287,7 @@ export function PosClient({
           items: cart.map((it) => ({
             productId: it.product.id,
             qty: it.qty,
-            unitPrice: it.customPrice ?? getProductPrice(it.product.sellPrice),
+            unitPrice: it.customPrice ?? getProductPrice(it.product),
             discountPct: it.discountPct,
           })),
         }),
@@ -272,7 +309,7 @@ export function PosClient({
         tenderedAmount: data.invoice.tenderedAmount,
         changeAmount: data.invoice.changeAmount,
         items: cart.map((it) => {
-          const price = it.customPrice ?? getProductPrice(it.product.sellPrice);
+          const price = it.customPrice ?? getProductPrice(it.product);
           const lineNet = price * it.qty * (1 - it.discountPct / 100);
           return {
             name: it.product.name,
@@ -413,7 +450,7 @@ export function PosClient({
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {filteredProducts.map((p) => {
               const inCart = cart.find((it) => it.product.id === p.id);
-              const price = getProductPrice(p.sellPrice);
+              const priceInfo = getProductPriceInfo(p);
               return (
                 <div
                   key={p.id}
@@ -427,6 +464,11 @@ export function PosClient({
                       {inCart.qty}
                     </span>
                   )}
+                  {priceInfo.hasPromoStrike && (
+                    <span className="absolute top-2 right-2 bg-rose-50 text-rose-700 text-[10px] font-extrabold px-1.5 py-0.5 rounded-md border border-rose-200">
+                      PROMO
+                    </span>
+                  )}
                   <div>
                     <span className="text-[10px] font-semibold text-slate-400 block truncate">
                       {p.categoryName}
@@ -438,13 +480,17 @@ export function PosClient({
                   <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
                     <div>
                       <span className="font-extrabold text-blue-600 text-sm block">
-                        {fmtIDR(price)}
+                        {fmtIDR(priceInfo.price)}
                       </span>
-                      {activeChannel.markupPct > 0 && (
-                        <span className="text-[10px] text-slate-400 line-through">
+                      {priceInfo.hasPromoStrike ? (
+                        <span className="text-[10px] text-slate-400 line-through block">
+                          {fmtIDR(priceInfo.originalPrice)}
+                        </span>
+                      ) : activeChannel.markupPct > 0 ? (
+                        <span className="text-[10px] text-slate-400 line-through block">
                           {fmtIDR(p.sellPrice)}
                         </span>
-                      )}
+                      ) : null}
                     </div>
                     <button
                       type="button"
@@ -490,7 +536,7 @@ export function PosClient({
           {/* List Item Keranjang */}
           <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[35vh] lg:max-h-none">
             {cart.map((it) => {
-              const currentPrice = it.customPrice ?? getProductPrice(it.product.sellPrice);
+              const currentPrice = it.customPrice ?? getProductPrice(it.product);
               const lineRaw = currentPrice * it.qty;
               const lineNet = lineRaw * (1 - it.discountPct / 100);
 
@@ -621,6 +667,14 @@ export function PosClient({
                 </select>
               </div>
             </div>
+
+            {/* Diskon Otomatis Total Belanja jika aktif */}
+            {autoBillDiscount > 0 && (
+              <div className="flex items-center justify-between p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
+                <span className="font-semibold">Promo Min. Belanja {fmtIDR(promoSettings.billPromo.minSpend)}</span>
+                <span className="font-extrabold">- {fmtIDR(autoBillDiscount)}</span>
+              </div>
+            )}
 
             {/* Diskon Tambahan / Voucher Kasir */}
             {cart.length > 0 && (

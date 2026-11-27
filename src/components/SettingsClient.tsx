@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Sparkles } from "lucide-react";
 
 interface CompanyInfo {
   name: string;
@@ -108,11 +110,20 @@ export function SettingsClient({ company, user }: { company: CompanyInfo; user: 
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Pengaturan</h1>
-        <p className="text-sm text-slate-500">
-          Profil perusahaan, akun login (email & password), tanggal penguncian periode, pajak, dan penomoran otomatis.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Pengaturan</h1>
+          <p className="text-sm text-slate-500">
+            Profil perusahaan, akun login (email & password), tanggal penguncian periode, pajak, dan penomoran otomatis.
+          </p>
+        </div>
+        <Link
+          href="/pengaturan/promo"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-semibold text-xs shadow-md shadow-orange-500/20 active:scale-95 transition"
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>Pengaturan Promo &amp; Komisi Aplikasi</span>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

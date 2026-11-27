@@ -2,11 +2,12 @@ import { requirePageSession } from "@/lib/require-page-session";
 import { prisma } from "@/lib/prisma";
 import { getTrialBalance } from "@/lib/accounting";
 import { PosClient } from "@/components/PosClient";
+import { getCompanyPromoSettings } from "@/lib/promo-settings";
 
 export default async function KasirPage() {
   const { company } = await requirePageSession();
 
-  const [products, categories, { rows }] = await Promise.all([
+  const [products, categories, promoSettings, { rows }] = await Promise.all([
     prisma.product.findMany({
       where: { companyId: company.id, isSold: true },
       include: { category: true },
@@ -16,6 +17,7 @@ export default async function KasirPage() {
       where: { companyId: company.id },
       orderBy: { name: "asc" },
     }),
+    getCompanyPromoSettings(company.id),
     getTrialBalance(company.id),
   ]);
 
@@ -37,6 +39,7 @@ export default async function KasirPage() {
       }))}
       categories={categories.map((c) => ({ id: c.id, name: c.name }))}
       cashAccounts={cashAccounts}
+      initialPromoSettings={promoSettings}
     />
   );
 }
