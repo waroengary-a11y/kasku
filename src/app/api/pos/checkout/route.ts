@@ -55,27 +55,45 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Pilih akun penerimaan kas/bank." }, { status: 400 });
     }
 
-    // 1. Kontak pelanggan default
+    // 1. Kontak pelanggan: untuk channel online pakai nama platform (GoFood/GrabFood/ShopeeFood), offline pakai Pelanggan Umum
+    const isOnlineChannel = channelId !== "offline";
     let targetContactId = contactId;
     if (!targetContactId) {
-      let defaultContact = await prisma.contact.findFirst({
-        where: {
-          companyId: session.companyId,
-          type: { contains: "customer" },
-          name: { in: ["Pelanggan Umum", "Umum", "Pelanggan Kasir", "Customer"] },
-        },
-      });
-      if (!defaultContact) {
-        defaultContact = await prisma.contact.findFirst({
-          where: { companyId: session.companyId, type: { contains: "customer" } },
+      if (isOnlineChannel) {
+        const platformName = channel || channelId;
+        let platformContact = await prisma.contact.findFirst({
+          where: {
+            companyId: session.companyId,
+            type: { contains: "customer" },
+            name: platformName,
+          },
         });
-      }
-      if (!defaultContact) {
-        defaultContact = await prisma.contact.create({
-          data: { companyId: session.companyId, name: "Pelanggan Umum", type: "customer" },
+        if (!platformContact) {
+          platformContact = await prisma.contact.create({
+            data: { companyId: session.companyId, name: platformName, type: "customer" },
+          });
+        }
+        targetContactId = platformContact.id;
+      } else {
+        let defaultContact = await prisma.contact.findFirst({
+          where: {
+            companyId: session.companyId,
+            type: { contains: "customer" },
+            name: { in: ["Pelanggan Umum", "Umum", "Pelanggan Kasir", "Customer"] },
+          },
         });
+        if (!defaultContact) {
+          defaultContact = await prisma.contact.findFirst({
+            where: { companyId: session.companyId, type: { contains: "customer" } },
+          });
+        }
+        if (!defaultContact) {
+          defaultContact = await prisma.contact.create({
+            data: { companyId: session.companyId, name: "Pelanggan Umum", type: "customer" },
+          });
+        }
+        targetContactId = defaultContact.id;
       }
-      targetContactId = defaultContact.id;
     }
 
     // 2. Ambil semua mapping akun yang dibutuhkan sekaligus
@@ -168,133 +186,236 @@ export async function POST(req: Request) {
     const fixedFeeAmount = calcResult.fixedFee;
     const deliverySubsidyAmount = calcResult.deliverySubsidy;
 
-    // Untuk offline: langsung kas/bank, untuk online: Piutang Platform
-    const isOnlineChannel = channelId !== "offline";
-    const grandTotal = Math.max(0, subtotalAfterItemDisc - totalMerchantDiscount + (Number(merchantDiscount) || 0) + (Number(extraDiscount) || 0));
-    // grandTotal yg diterima kasir = netRevenue untuk online, subtotalAfterItemDisc - extraDiscount untuk offline
+    // Untuk offline: langsung kas/bank, untuk online: Piutang Platform (dikelompokkan per platform per hari)
     const receivedAmount = isOnlineChannel ? netRevenue : Math.max(0, subtotalAfterItemDisc - (Number(extraDiscount) || 0));
-
     const now = new Date();
+    const finalGrandTotal = receivedAmount;
 
-    // 5. Nomor Invoice & Payment
-    const [invoiceNo, paymentNo] = await Promise.all([
-      getNextDocNumber(session.companyId, "INV"),
-      getNextDocNumber(session.companyId, "PAY"),
-    ]);
-
-    // 6. Buat Jurnal — pisahkan bruto, diskon, komisi, biaya tetap, subsidi
-    const journalLines: Array<{ accountId: string; contactId?: string; debit: number; credit: number; description: string }> = [];
-
-    const effectiveOnlineAccountId = platformReceivableId || cashAccountId;
-    if (isOnlineChannel && !effectiveOnlineAccountId) {
-      return NextResponse.json({ error: "Akun Piutang Platform / Kas belum dikonfigurasi." }, { status: 400 });
-    }
+    let targetInvoiceId: string;
+    let targetInvoiceNo: string;
+    let posOrderNo: string;
+    let targetInvoiceCreatedAt: Date;
 
     if (isOnlineChannel) {
-      // Untuk channel online: Debit Piutang Platform (atau langsung kas jika sudah cair)
-      // Kredit Penjualan neto
-      journalLines.push({
-        accountId: effectiveOnlineAccountId,
-        contactId: targetContactId,
-        debit: receivedAmount,
-        credit: 0,
-        description: `Penerimaan ${channel} - ${invoiceNo}`,
-      });
+      const effectiveOnlineAccountId = platformReceivableId || cashAccountId;
+      if (!effectiveOnlineAccountId) {
+        return NextResponse.json({ error: "Akun Piutang Usaha / Kas belum dikonfigurasi." }, { status: 400 });
+      }
 
-      // Jika ada komisi — Debit Beban Komisi, Kredit sudah dipotong dari penerimaan
-      // (dicatat sebagai selisih — net method)
-      journalLines.push({
-        accountId: salesAccountId,
-        contactId: targetContactId,
-        debit: 0,
-        credit: receivedAmount,
-        description: `Penjualan neto ${channel} - ${invoiceNo}`,
-      });
-    } else {
-      // Offline: Debit Kas, Kredit Penjualan
-      journalLines.push({
-        accountId: cashAccountId,
-        contactId: targetContactId,
-        debit: receivedAmount,
-        credit: 0,
-        description: `Penerimaan Kasir ${invoiceNo}`,
-      });
-      journalLines.push({
-        accountId: salesAccountId,
-        contactId: targetContactId,
-        debit: 0,
-        credit: receivedAmount,
-        description: `Penjualan Kasir ${invoiceNo}`,
-      });
-    }
+      // Nomor transaksi kasir (KSR-xxxx) & tanggal WIB
+      posOrderNo = await getNextDocNumber(session.companyId, "KSR");
+      const wibDateStr = new Date(now.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const recapTag = `[REKAP:${channelId}:${wibDateStr}]`;
 
-    const journal = await createBalancedJournal({
-      companyId: session.companyId,
-      transDate: now,
-      memo: `Kasir [${channel}] ${invoiceNo} (${paymentMethod})`,
-      sourceType: "SALE",
-      lines: journalLines,
-    });
+      const totalCut = commissionAmount + fixedFeeAmount + deliverySubsidyAmount + (Number(merchantDiscount) || 0) + (Number(extraDiscount) || 0);
+      const itemSummary = processedItems.map((p) => `${p.qty}x ${p.description}`).join(", ");
+      const lineDescription = `${posOrderNo} • ${itemSummary} (Bruto Rp ${Math.round(grossSubtotal).toLocaleString("id-ID")}${totalCut > 0 ? `, Pot. Rp ${Math.round(totalCut).toLocaleString("id-ID")}` : ""})`;
 
-    // 7. Buat SalesInvoice (Status: PAID)
-    const finalGrandTotal = receivedAmount;
-    const invoice = await prisma.salesInvoice.create({
-      data: {
-        companyId: session.companyId,
-        invoiceNo,
-        contactId: targetContactId,
-        transDate: now,
-        dueDate: now,
-        status: "PAID",
-        subtotal: grossSubtotal,
-        discountTotal: totalMerchantDiscount,
-        taxTotal: 0,
-        grandTotal: finalGrandTotal,
-        paidAmount: finalGrandTotal,
-        balanceDue: 0,
-        journalEntryId: journal.id,
-        notes: [
-          `[Kasir ${channel} - ${paymentMethod}]`,
-          commissionAmount > 0 ? `Komisi: Rp ${commissionAmount.toLocaleString("id-ID")}` : "",
-          fixedFeeAmount > 0 ? `Biaya tetap: Rp ${fixedFeeAmount.toLocaleString("id-ID")}` : "",
-          deliverySubsidyAmount > 0 ? `Subsidi ongkir: Rp ${deliverySubsidyAmount.toLocaleString("id-ID")}` : "",
-          notes || "",
-        ].filter(Boolean).join(" | "),
-        items: {
-          create: processedItems.map((p) => ({
-            productId: p.productId,
-            description: p.description,
-            qty: p.qty,
-            unitPrice: p.unitPrice,
-            taxRate: 0,
-            lineTotal: p.lineTotal,
-          })),
+      // Cari tagihan OPEN untuk platform & tanggal yang sama
+      const existingRecap = await prisma.salesInvoice.findFirst({
+        where: {
+          companyId: session.companyId,
+          contactId: targetContactId,
+          status: "OPEN",
+          notes: { contains: recapTag },
         },
-      },
-    });
+      });
 
-    // 8. Payment
-    const paymentAccountId = isOnlineChannel ? effectiveOnlineAccountId : cashAccountId;
-    await prisma.payment.create({
-      data: {
+      if (existingRecap) {
+        const journal = await createBalancedJournal({
+          companyId: session.companyId,
+          transDate: now,
+          memo: `Kasir [${channel}] ${posOrderNo} → ${existingRecap.invoiceNo}`,
+          sourceType: "SALE",
+          sourceId: existingRecap.id,
+          lines: [
+            {
+              accountId: effectiveOnlineAccountId,
+              contactId: targetContactId,
+              debit: receivedAmount,
+              credit: 0,
+              description: `Piutang ${channel} (${posOrderNo})`,
+            },
+            {
+              accountId: salesAccountId,
+              contactId: targetContactId,
+              debit: 0,
+              credit: receivedAmount,
+              description: `Penjualan neto ${channel} (${posOrderNo})`,
+            },
+          ],
+        });
+
+        await prisma.salesInvoiceItem.create({
+          data: {
+            salesInvoiceId: existingRecap.id,
+            productId: null,
+            description: lineDescription,
+            qty: 1,
+            unitPrice: receivedAmount,
+            taxRate: 0,
+            lineTotal: receivedAmount,
+          },
+        });
+
+        const updated = await prisma.salesInvoice.update({
+          where: { id: existingRecap.id },
+          data: {
+            subtotal: { increment: receivedAmount },
+            grandTotal: { increment: receivedAmount },
+            balanceDue: { increment: receivedAmount },
+          },
+        });
+
+        void journal;
+        targetInvoiceId = updated.id;
+        targetInvoiceNo = updated.invoiceNo;
+        targetInvoiceCreatedAt = updated.createdAt;
+      } else {
+        const invoiceNo = await getNextDocNumber(session.companyId, "INV");
+        const journal = await createBalancedJournal({
+          companyId: session.companyId,
+          transDate: now,
+          memo: `Rekap Kasir [${channel}] ${invoiceNo} (${posOrderNo})`,
+          sourceType: "SALE",
+          lines: [
+            {
+              accountId: effectiveOnlineAccountId,
+              contactId: targetContactId,
+              debit: receivedAmount,
+              credit: 0,
+              description: `Piutang ${channel} (${posOrderNo})`,
+            },
+            {
+              accountId: salesAccountId,
+              contactId: targetContactId,
+              debit: 0,
+              credit: receivedAmount,
+              description: `Penjualan neto ${channel} (${posOrderNo})`,
+            },
+          ],
+        });
+
+        const created = await prisma.salesInvoice.create({
+          data: {
+            companyId: session.companyId,
+            invoiceNo,
+            contactId: targetContactId,
+            transDate: now,
+            dueDate: now,
+            status: "OPEN",
+            subtotal: receivedAmount,
+            discountTotal: 0,
+            taxTotal: 0,
+            grandTotal: receivedAmount,
+            paidAmount: 0,
+            balanceDue: receivedAmount,
+            journalEntryId: journal.id,
+            notes: `${recapTag} Rekap Penjualan Kasir ${channel} (${wibDateStr})${notes ? ` | ${notes}` : ""}`,
+            items: {
+              create: [
+                {
+                  productId: null,
+                  description: lineDescription,
+                  qty: 1,
+                  unitPrice: receivedAmount,
+                  taxRate: 0,
+                  lineTotal: receivedAmount,
+                },
+              ],
+            },
+          },
+        });
+
+        targetInvoiceId = created.id;
+        targetInvoiceNo = created.invoiceNo;
+        targetInvoiceCreatedAt = created.createdAt;
+      }
+    } else {
+      // Offline: 1 transaksi = 1 SalesInvoice PAID + Payment langsung
+      const [invoiceNo, paymentNo] = await Promise.all([
+        getNextDocNumber(session.companyId, "INV"),
+        getNextDocNumber(session.companyId, "PAY"),
+      ]);
+      posOrderNo = invoiceNo;
+
+      const journal = await createBalancedJournal({
         companyId: session.companyId,
-        paymentNo,
-        direction: "IN",
-        contactId: targetContactId,
-        cashAccountId: paymentAccountId,
-        paymentDate: now,
-        amount: finalGrandTotal,
-        method: paymentMethod,
-        journalEntryId: journal.id,
-        allocations: {
-          create: {
-            targetType: "SALES_INVOICE",
-            targetId: invoice.id,
-            allocatedAmount: finalGrandTotal,
+        transDate: now,
+        memo: `Kasir [${channel}] ${invoiceNo} (${paymentMethod})`,
+        sourceType: "SALE",
+        lines: [
+          {
+            accountId: cashAccountId,
+            contactId: targetContactId,
+            debit: receivedAmount,
+            credit: 0,
+            description: `Penerimaan Kasir ${invoiceNo}`,
+          },
+          {
+            accountId: salesAccountId,
+            contactId: targetContactId,
+            debit: 0,
+            credit: receivedAmount,
+            description: `Penjualan Kasir ${invoiceNo}`,
+          },
+        ],
+      });
+
+      const invoice = await prisma.salesInvoice.create({
+        data: {
+          companyId: session.companyId,
+          invoiceNo,
+          contactId: targetContactId,
+          transDate: now,
+          dueDate: now,
+          status: "PAID",
+          subtotal: grossSubtotal,
+          discountTotal: totalMerchantDiscount,
+          taxTotal: 0,
+          grandTotal: finalGrandTotal,
+          paidAmount: finalGrandTotal,
+          balanceDue: 0,
+          journalEntryId: journal.id,
+          notes: [`[Kasir ${channel} - ${paymentMethod}]`, notes || ""].filter(Boolean).join(" | "),
+          items: {
+            create: processedItems.map((p) => ({
+              productId: p.productId,
+              description: p.description,
+              qty: p.qty,
+              unitPrice: p.unitPrice,
+              taxRate: 0,
+              lineTotal: p.lineTotal,
+            })),
           },
         },
-      },
-    });
+      });
+
+      await prisma.payment.create({
+        data: {
+          companyId: session.companyId,
+          paymentNo,
+          direction: "IN",
+          contactId: targetContactId,
+          cashAccountId,
+          paymentDate: now,
+          amount: finalGrandTotal,
+          method: paymentMethod,
+          journalEntryId: journal.id,
+          allocations: {
+            create: {
+              targetType: "SALES_INVOICE",
+              targetId: invoice.id,
+              allocatedAmount: finalGrandTotal,
+            },
+          },
+        },
+      });
+
+      targetInvoiceId = invoice.id;
+      targetInvoiceNo = invoice.invoiceNo;
+      targetInvoiceCreatedAt = invoice.createdAt;
+    }
 
     // 9. Potong Stok
     const defaultWarehouse = await prisma.warehouse.findFirst({
@@ -314,7 +435,7 @@ export async function POST(req: Request) {
             warehouseId: defaultWarehouse.id,
             productId: item.productId,
             sourceType: "SALE",
-            sourceId: invoice.id,
+            sourceId: targetInvoiceId,
             qtyOut: item.qty,
             unitCost: item.buyPrice,
           },
@@ -327,8 +448,10 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       invoice: {
-        id: invoice.id,
-        invoiceNo: invoice.invoiceNo,
+        id: targetInvoiceId,
+        invoiceNo: posOrderNo,
+        recapInvoiceNo: isOnlineChannel ? targetInvoiceNo : undefined,
+        isOnlineRecap: isOnlineChannel,
         grandTotal: finalGrandTotal,
         netRevenue,
         commissionAmount,
@@ -336,7 +459,7 @@ export async function POST(req: Request) {
         paymentMethod,
         tenderedAmount: Number(tenderedAmount) || finalGrandTotal,
         changeAmount,
-        createdAt: invoice.createdAt,
+        createdAt: targetInvoiceCreatedAt,
       },
     });
   } catch (err: unknown) {

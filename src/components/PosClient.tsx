@@ -84,6 +84,8 @@ export function PosClient({
   const [error, setError] = useState("");
   const [checkoutSuccess, setCheckoutSuccess] = useState<{
     invoiceNo: string;
+    recapInvoiceNo?: string;
+    isOnlineRecap?: boolean;
     channelName: string;
     subtotal: number;
     discountTotal: number;
@@ -304,6 +306,8 @@ export function PosClient({
 
       setCheckoutSuccess({
         invoiceNo: data.invoice.invoiceNo,
+        recapInvoiceNo: data.invoice.recapInvoiceNo,
+        isOnlineRecap: Boolean(data.invoice.isOnlineRecap),
         channelName: CHANNEL_META[channel].name,
         subtotal: rawSubtotal,
         discountTotal: totalDiscountAmount,
@@ -903,14 +907,22 @@ export function PosClient({
                   <span>{checkoutSuccess.commissionAmount > 0 || checkoutSuccess.fixedFeeAmount > 0 ? "Penerimaan Bersih" : "Total"}</span>
                   <span>{fmtIDR(checkoutSuccess.grandTotal)}</span>
                 </div>
-                <div className="flex justify-between text-slate-500">
-                  <span>Bayar</span>
-                  <span>{fmtIDR(checkoutSuccess.tenderedAmount)}</span>
-                </div>
-                <div className="flex justify-between font-bold text-emerald-600">
-                  <span>Kembalian</span>
-                  <span>{fmtIDR(checkoutSuccess.changeAmount)}</span>
-                </div>
+                {checkoutSuccess.isOnlineRecap ? (
+                  <div className="pt-1.5 mt-1.5 border-t border-slate-200 text-[11px] text-amber-700 font-semibold text-center">
+                    Masuk Tagihan {checkoutSuccess.channelName} ({checkoutSuccess.recapInvoiceNo}) • Status: Belum Terbayar
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-slate-500">
+                      <span>Bayar</span>
+                      <span>{fmtIDR(checkoutSuccess.tenderedAmount)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-emerald-600">
+                      <span>Kembalian</span>
+                      <span>{fmtIDR(checkoutSuccess.changeAmount)}</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
