@@ -63,6 +63,7 @@ export function BillFormClient({
   initialTransDate,
   initialDueDate,
   initialItems,
+  initialExtras,
   contacts,
   products,
   terms,
@@ -75,6 +76,7 @@ export function BillFormClient({
   initialTransDate: string;
   initialDueDate: string;
   initialItems?: LineItem[];
+  initialExtras?: Partial<SummaryExtrasState>;
   contacts: ContactOpt[];
   products: ProductOpt[];
   terms: TermOpt[];
@@ -88,12 +90,12 @@ export function BillFormClient({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [extras, setExtras] = useState<SummaryExtrasState>({
-    extraDiscountType: "rp",
-    extraDiscountValue: "0",
-    shippingFee: "0",
-    transactionFee: "0",
-    withholdings: [],
-    downPayment: "0",
+    extraDiscountType: initialExtras?.extraDiscountType || "rp",
+    extraDiscountValue: initialExtras?.extraDiscountValue || "0",
+    shippingFee: initialExtras?.shippingFee || "0",
+    transactionFee: initialExtras?.transactionFee || "0",
+    withholdings: initialExtras?.withholdings || [],
+    downPayment: initialExtras?.downPayment || "0",
   });
 
   const [items, setItems] = useState<LineItem[]>(

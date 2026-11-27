@@ -8,6 +8,7 @@ interface EditItemInput {
   qty: number;
   unitPrice: number;
   taxRate: number;
+  discount?: number;
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -92,15 +93,31 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   let subtotal = 0;
+  let discountTotal = 0;
   let taxTotal = 0;
   const computedItems = items.map((it) => {
-    const lineNet = Number(it.qty) * Number(it.unitPrice);
-    const lineTax = lineNet * (Number(it.taxRate) / 100);
-    subtotal += lineNet;
+    const qty = Number(it.qty) || 0;
+    const unitPrice = Number(it.unitPrice) || 0;
+    const taxRate = Number(it.taxRate) || 0;
+    const discount = Number(it.discount) || 0;
+
+    const lineSubtotalBeforeDiscount = qty * unitPrice;
+    const lineDiscount = lineSubtotalBeforeDiscount * (discount / 100);
+    const lineSubtotal = lineSubtotalBeforeDiscount - lineDiscount;
+    const lineTax = lineSubtotal * (taxRate / 100);
+    const lineTotal = lineSubtotal + lineTax;
+
+    subtotal += lineSubtotal;
+    discountTotal += lineDiscount;
     taxTotal += lineTax;
-    return { ...it, lineTotal: lineNet + lineTax };
+    return { ...it, lineTotal };
   });
-  const grandTotal = subtotal + taxTotal;
+
+  const extraDiscount = Number(body.extraDiscount) || 0;
+  const withholding = Number(body.withholding) || 0;
+  const extraCharges = (Number(body.shippingFee) || 0) + (Number(body.transactionFee) || 0);
+  const netRevenue = Math.max(0, subtotal - extraDiscount - withholding + extraCharges);
+  const grandTotal = netRevenue + taxTotal;
 
   // Reverse previous stock movements for this invoice
   const oldMovements = await prisma.stockMovement.findMany({
@@ -198,6 +215,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       dueDate: new Date(dueDate),
       notes: notes || null,
       subtotal,
+      discountTotal: discountTotal + extraDiscount + withholding,
       taxTotal,
       grandTotal,
       balanceDue: newBalanceDue,

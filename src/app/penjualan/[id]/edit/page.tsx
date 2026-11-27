@@ -30,6 +30,13 @@ export default async function EditSalesInvoicePage({ params }: { params: Promise
 
   if (!invoice) notFound();
 
+  const subtotal = Number(invoice.subtotal);
+  const taxTotal = Number(invoice.taxTotal);
+  const grandTotal = Number(invoice.grandTotal);
+  const discountTotal = Number(invoice.discountTotal);
+  // Hitung selisih diskon/pemotongan jika ada
+  const computedDiscount = Math.max(0, subtotal + taxTotal - grandTotal) || discountTotal;
+
   return (
     <AppShell companyName={company.name} userName={session.name} isDemo={company.isDemo}>
       <InvoiceFormClient
@@ -49,6 +56,14 @@ export default async function EditSalesInvoicePage({ params }: { params: Promise
           unitPrice: String(Number(it.unitPrice)),
           taxRate: String(Number(it.taxRate)),
         }))}
+        initialExtras={{
+          extraDiscountType: "rp",
+          extraDiscountValue: String(computedDiscount),
+          shippingFee: "0",
+          transactionFee: "0",
+          withholdings: [],
+          downPayment: String(Number(invoice.paidAmount) || 0),
+        }}
         contacts={contacts}
         products={products.map((p) => ({ ...p, sellPrice: Number(p.sellPrice) }))}
         terms={terms}

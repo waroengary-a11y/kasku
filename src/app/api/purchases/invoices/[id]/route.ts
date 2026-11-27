@@ -91,7 +91,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     taxTotal += lineTax;
     return { ...it, lineTotal: lineNet + lineTax };
   });
-  const grandTotal = subtotal + taxTotal;
+
+  const extraDiscount = Number(body.extraDiscount) || 0;
+  const withholding = Number(body.withholding) || 0;
+  const extraCharges = (Number(body.shippingFee) || 0) + (Number(body.transactionFee) || 0);
+  const netCost = Math.max(0, subtotal - extraDiscount - withholding + extraCharges);
+  const grandTotal = netCost + taxTotal;
 
   // Reverse old stock movements
   const oldMovements = await prisma.stockMovement.findMany({

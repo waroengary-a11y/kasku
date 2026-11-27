@@ -30,6 +30,11 @@ export default async function EditPurchaseBillPage({ params }: { params: Promise
 
   if (!bill) notFound();
 
+  const subtotal = Number(bill.subtotal);
+  const taxTotal = Number(bill.taxTotal);
+  const grandTotal = Number(bill.grandTotal);
+  const computedDiscount = Math.max(0, subtotal + taxTotal - grandTotal);
+
   return (
     <AppShell companyName={company.name} userName={session.name} isDemo={company.isDemo}>
       <BillFormClient
@@ -47,6 +52,14 @@ export default async function EditPurchaseBillPage({ params }: { params: Promise
           unitCost: String(Number(it.unitCost)),
           taxRate: String(Number(it.taxRate)),
         }))}
+        initialExtras={{
+          extraDiscountType: "rp",
+          extraDiscountValue: String(computedDiscount),
+          shippingFee: "0",
+          transactionFee: "0",
+          withholdings: [],
+          downPayment: String(Number(bill.paidAmount) || 0),
+        }}
         contacts={contacts}
         products={products.map((p) => ({ ...p, buyPrice: Number(p.buyPrice) }))}
         terms={terms}

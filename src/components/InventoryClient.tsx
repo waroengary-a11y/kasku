@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowRightLeft, ClipboardCheck, Warehouse as WarehouseIcon } from "lucide-react";
+import { ArrowRightLeft, ClipboardCheck, Search, Warehouse as WarehouseIcon } from "lucide-react";
 import { CurrencyInput } from "@/components/CurrencyInput";
 
 interface WarehouseItem {
@@ -68,6 +68,8 @@ export function InventoryClient({
   const [stocks, setStocks] = useState(initialStocks);
   const [movements, setMovements] = useState(initialMovements);
   const [warehouses, setWarehouses] = useState(initialWarehouses);
+  const [search, setSearch] = useState("");
+  const [filterWh, setFilterWh] = useState("all");
   const [error, setError] = useState("");
 
   // Modals
@@ -179,8 +181,298 @@ export function InventoryClient({
   const totalQty = stocks.reduce((s, r) => s + r.qtyOnHand, 0);
   const totalValue = stocks.reduce((s, r) => s + r.qtyOnHand * r.avgCost, 0);
 
+  const filteredStocks = stocks.filter((s) => {
+    const matchWh = filterWh === "all" || s.warehouseId === filterWh;
+    const q = search.trim().toLowerCase();
+    const matchSearch =
+      !q ||
+      s.product.name.toLowerCase().includes(q) ||
+      s.product.sku.toLowerCase().includes(q) ||
+      s.warehouse.name.toLowerCase().includes(q);
+    return matchWh && matchSearch;
+  });
+
+  const filteredMovements = movements.filter((m) => {
+    const q = search.trim().toLowerCase();
+    return (
+      !q ||
+      m.product.name.toLowerCase().includes(q) ||
+      m.product.sku.toLowerCase().includes(q) ||
+      m.warehouse.name.toLowerCase().includes(q) ||
+      (SOURCE_LABELS[m.sourceType] || m.sourceType).toLowerCase().includes(q)
+    );
+  });
+
+  const filteredWarehouses = warehouses.filter((w) => {
+    const q = search.trim().toLowerCase();
+    return !q || w.name.toLowerCase().includes(q) || w.code.toLowerCase().includes(q);
+  });
+
   return (
-    <div className="space-y-6">
+    <div>
+      {/* Mobile View */}
+      <div className="block lg:hidden space-y-4 pb-24">
+        {/* Mobile Summary Cards */}
+        <div className="grid grid-cols-2 gap-2.5">
+          <div className="bg-white rounded-2xl border border-slate-100 p-3.5 shadow-xs">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+              Nilai Persediaan
+            </span>
+            <span className="text-base font-extrabold text-blue-600 mt-0.5 block truncate">
+              {money(totalValue)}
+            </span>
+          </div>
+          <div className="bg-white rounded-2xl border border-slate-100 p-3.5 shadow-xs">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+              Total Unit
+            </span>
+            <span className="text-base font-extrabold text-slate-900 mt-0.5 block">
+              {totalQty.toLocaleString("id-ID")}{" "}
+              <span className="text-xs font-normal text-slate-400">unit</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Quick Action Buttons */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setShowTransfer(true);
+            }}
+            className="py-2.5 px-3 rounded-2xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 flex items-center justify-center gap-1.5 shadow-xs active:scale-[0.98] transition"
+          >
+            <ArrowRightLeft className="w-4 h-4 text-blue-600" />
+            <span>Transfer Gudang</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setShowAdjust(true);
+            }}
+            className="py-2.5 px-3 rounded-2xl bg-blue-600 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-xs active:scale-[0.98] transition"
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            <span>Penyesuaian Stok</span>
+          </button>
+        </div>
+
+        {/* Search Bar */}
+        <div className="relative">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Cari barang, SKU, atau gudang..."
+            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-2xl text-sm shadow-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+          />
+        </div>
+
+        {/* Mobile Tab Switcher */}
+        <div className="flex gap-2 border-b border-slate-200/80 pb-1 overflow-x-auto no-scrollbar">
+          {[
+            { key: "stocks", label: `Stok (${filteredStocks.length})` },
+            { key: "movements", label: `Pergerakan (${filteredMovements.length})` },
+            { key: "warehouses", label: `Gudang (${filteredWarehouses.length})` },
+          ].map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key as typeof tab)}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition ${
+                tab === t.key
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "bg-white text-slate-600 border border-slate-200"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab Content: Stocks */}
+        {tab === "stocks" && (
+          <div className="space-y-2.5">
+            {/* Warehouse Filter Chips */}
+            {warehouses.length > 1 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+                <button
+                  type="button"
+                  onClick={() => setFilterWh("all")}
+                  className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap transition ${
+                    filterWh === "all"
+                      ? "bg-blue-50 text-blue-700 border border-blue-200"
+                      : "bg-slate-100 text-slate-600 border border-transparent"
+                  }`}
+                >
+                  Semua Gudang
+                </button>
+                {warehouses.map((w) => (
+                  <button
+                    key={w.id}
+                    type="button"
+                    onClick={() => setFilterWh(w.id)}
+                    className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap transition ${
+                      filterWh === w.id
+                        ? "bg-blue-50 text-blue-700 border border-blue-200"
+                        : "bg-slate-100 text-slate-600 border border-transparent"
+                    }`}
+                  >
+                    {w.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {filteredStocks.map((s) => (
+              <div
+                key={s.id}
+                className="bg-white rounded-2xl border border-slate-100 p-4 shadow-xs space-y-2.5"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-slate-900 truncate">
+                      {s.product.name}
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono mt-0.5">
+                      {s.product.sku} ·{" "}
+                      <span className="text-slate-600 font-sans">{s.warehouse.name}</span>
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <span className="text-sm font-extrabold text-blue-600">
+                      {s.qtyOnHand.toLocaleString("id-ID")}
+                    </span>
+                    <span className="text-xs text-slate-500 ml-1">{s.product.unit}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">HPP Rata-rata</span>
+                    <span className="font-semibold text-slate-700">{money(s.avgCost)}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-slate-400 block text-[10px]">Total Nilai Stok</span>
+                    <span className="font-bold text-slate-900">
+                      {money(s.qtyOnHand * s.avgCost)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {filteredStocks.length === 0 && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center text-sm text-slate-400">
+                Stok tidak ditemukan.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab Content: Movements */}
+        {tab === "movements" && (
+          <div className="space-y-2.5">
+            {filteredMovements.map((m) => (
+              <div
+                key={m.id}
+                className="bg-white rounded-2xl border border-slate-100 p-3.5 shadow-xs space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        m.qtyIn > 0
+                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          : "bg-rose-50 text-rose-700 border border-rose-200"
+                      }`}
+                    >
+                      {SOURCE_LABELS[m.sourceType] || m.sourceType}
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      {new Date(m.movementDate).toLocaleDateString("id-ID")}
+                    </span>
+                  </div>
+                  <div className="text-right flex-shrink-0 font-extrabold text-sm">
+                    {m.qtyIn > 0 ? (
+                      <span className="text-emerald-600">+{m.qtyIn}</span>
+                    ) : (
+                      <span className="text-rose-600">-{m.qtyOut}</span>
+                    )}{" "}
+                    <span className="text-[11px] font-normal text-slate-500">{m.product.unit}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-50">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-900 truncate">{m.product.name}</div>
+                    <div className="text-[11px] text-slate-400 font-mono">
+                      {m.product.sku} · {m.warehouse.name}
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <span className="text-[10px] text-slate-400 block">HPP</span>
+                    <span className="font-semibold text-slate-700">{money(m.unitCost)}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {filteredMovements.length === 0 && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center text-sm text-slate-400">
+                Belum ada pergerakan stok.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab Content: Warehouses */}
+        {tab === "warehouses" && (
+          <div className="space-y-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setShowWarehouse(true);
+              }}
+              className="w-full py-2.5 px-3 rounded-2xl border border-dashed border-blue-300 text-blue-600 bg-blue-50/50 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.99] transition"
+            >
+              <WarehouseIcon className="w-4 h-4" />
+              <span>+ Tambah Gudang Baru</span>
+            </button>
+
+            {filteredWarehouses.map((w) => (
+              <div
+                key={w.id}
+                className="bg-white rounded-2xl border border-slate-100 p-4 shadow-xs space-y-1.5"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-blue-600">{w.code}</span>
+                  {w.isDefault && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-semibold">
+                      Gudang Utama
+                    </span>
+                  )}
+                </div>
+                <div className="font-bold text-slate-900 text-sm">{w.name}</div>
+                <div className="text-xs text-slate-500">{w.address || "Tidak ada alamat tercatat"}</div>
+              </div>
+            ))}
+
+            {filteredWarehouses.length === 0 && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center text-sm text-slate-400">
+                Gudang tidak ditemukan.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop View */}
+      <div className="hidden lg:block space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Inventori / Persediaan</h1>
@@ -363,6 +655,7 @@ export function InventoryClient({
           ))}
         </div>
       )}
+      </div>
 
       {/* Modal Penyesuaian Stok */}
       {showAdjust && (
