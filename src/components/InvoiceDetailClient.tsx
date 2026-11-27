@@ -291,6 +291,12 @@ export function InvoiceDetailClient({
               <span>Sisa Tagihan</span>
               <span>{numFmt(invoice.balanceDue)}</span>
             </div>
+            {invoice.notes && (
+              <div className="mt-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                <span className="font-semibold text-slate-700 block mb-0.5">Catatan / Rincian Channel:</span>
+                {invoice.notes}
+              </div>
+            )}
           </div>
         </div>
       </div>

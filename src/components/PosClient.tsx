@@ -20,6 +20,7 @@ import {
 import {
   ChannelSettingsPayload, DEFAULT_CHANNEL_SETTINGS, ChannelId,
   CHANNEL_META, CHANNEL_IDS, getProductPriceForChannel,
+  calculateNetRevenue, DEFAULT_SCHEMES,
 } from "@/lib/channel-settings";
 
 interface ProductItem {
@@ -85,6 +86,11 @@ export function PosClient({
     channelName: string;
     subtotal: number;
     discountTotal: number;
+    grossTotal: number;
+    commissionAmount: number;
+    fixedFeeAmount: number;
+    deliverySubsidy: number;
+    netRevenue: number;
     grandTotal: number;
     tenderedAmount: number;
     changeAmount: number;
@@ -209,6 +215,31 @@ export function PosClient({
   // Grand Total setelah diskon otomatis & diskon manual
   const grandTotal = Math.max(0, rawSubtotal - autoBillDiscount - (Number(extraDiscountTotal) || 0));
 
+  // Hitung estimasi potongan platform & penerimaan bersih untuk channel online
+  const activeScheme = useMemo(
+    () =>
+      channelSettings.schemes.find((s) => s.id === activeChannelCfg?.defaultSchemeId) ??
+      channelSettings.schemes[0] ??
+      DEFAULT_SCHEMES[0],
+    [channelSettings.schemes, activeChannelCfg]
+  );
+
+  const posCalcResult = useMemo(() => {
+    return calculateNetRevenue(
+      {
+        grossPrice: rawSubtotal,
+        merchantDiscount: autoBillDiscount + (Number(extraDiscountTotal) || 0),
+        platformDiscount: 0,
+        deliverySubsidy: 0,
+        hpp: 0,
+      },
+      activeChannelCfg,
+      activeScheme
+    );
+  }, [rawSubtotal, autoBillDiscount, extraDiscountTotal, activeChannelCfg, activeScheme]);
+
+  const netTotalToReceive = channel !== "offline" ? posCalcResult.netRevenue : grandTotal;
+
   const totalDiscountAmount = useMemo(() => {
     let itemDiscounts = 0;
     for (const item of cart) {
@@ -244,8 +275,10 @@ export function PosClient({
         body: JSON.stringify({
           cashAccountId: selectedCashId,
           paymentMethod,
-          tenderedAmount: paymentMethod === "Tunai" ? (tendered || grandTotal) : grandTotal,
+          tenderedAmount: paymentMethod === "Tunai" ? (tendered || netTotalToReceive) : netTotalToReceive,
+          channelId: channel,
           channel: CHANNEL_META[channel].name,
+          schemeId: activeChannelCfg?.defaultSchemeId,
           extraDiscount: Number(extraDiscountTotal) || 0,
           items: cart.map((it) => ({
             productId: it.product.id,
@@ -268,6 +301,11 @@ export function PosClient({
         channelName: CHANNEL_META[channel].name,
         subtotal: rawSubtotal,
         discountTotal: totalDiscountAmount,
+        grossTotal: rawSubtotal,
+        commissionAmount: data.invoice.commissionAmount || 0,
+        fixedFeeAmount: data.invoice.fixedFeeAmount || 0,
+        deliverySubsidy: 0,
+        netRevenue: data.invoice.netRevenue ?? data.invoice.grandTotal,
         grandTotal: data.invoice.grandTotal,
         tenderedAmount: data.invoice.tenderedAmount,
         changeAmount: data.invoice.changeAmount,
@@ -702,14 +740,34 @@ export function PosClient({
                   <span>- {fmtIDR(totalDiscountAmount)}</span>
                 </div>
               )}
+              {channel !== "offline" && cart.length > 0 && (posCalcResult.commissionAmount > 0 || posCalcResult.fixedFee > 0) && (
+                <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs space-y-1 my-1.5">
+                  <div className="flex justify-between text-slate-600">
+                    <span>Harga Jual ({CHANNEL_META[channel].badge})</span>
+                    <span className="font-semibold">{fmtIDR(grandTotal)}</span>
+                  </div>
+                  {posCalcResult.commissionAmount > 0 && (
+                    <div className="flex justify-between text-rose-600">
+                      <span>Komisi Aplikasi ({activeChannelCfg.commissionPct}%)</span>
+                      <span className="font-semibold">- {fmtIDR(posCalcResult.commissionAmount)}</span>
+                    </div>
+                  )}
+                  {posCalcResult.fixedFee > 0 && (
+                    <div className="flex justify-between text-rose-600">
+                      <span>Biaya Tetap Platform</span>
+                      <span className="font-semibold">- {fmtIDR(posCalcResult.fixedFee)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex justify-between items-center text-sm font-bold text-slate-900">
-                <span>Total Tagihan</span>
-                <span className="text-xl text-blue-600 font-extrabold">{fmtIDR(grandTotal)}</span>
+                <span>{channel !== "offline" ? "Penerimaan Bersih (Net)" : "Total Tagihan"}</span>
+                <span className="text-xl text-blue-600 font-extrabold">{fmtIDR(netTotalToReceive)}</span>
               </div>
-              {paymentMethod === "Tunai" && tendered > grandTotal && (
+              {paymentMethod === "Tunai" && tendered > netTotalToReceive && (
                 <div className="flex justify-between items-center text-xs font-semibold text-emerald-600">
                   <span>Kembalian</span>
-                  <span>{fmtIDR(change)}</span>
+                  <span>{fmtIDR(Math.max(0, (tendered || 0) - netTotalToReceive))}</span>
                 </div>
               )}
             </div>
@@ -717,11 +775,11 @@ export function PosClient({
             {/* Tombol Selesaikan Transaksi */}
             <button
               type="button"
-              disabled={loading || cart.length === 0 || (paymentMethod === "Tunai" && tendered > 0 && tendered < grandTotal)}
+              disabled={loading || cart.length === 0 || (paymentMethod === "Tunai" && tendered > 0 && tendered < netTotalToReceive)}
               onClick={handleCheckout}
               className="w-full py-3.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md active:scale-[0.99] transition disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {loading ? "Memproses..." : `Bayar & Cetak Struk (${fmtIDR(grandTotal)})`}
+              {loading ? "Memproses..." : `Simpan Transaksi (${fmtIDR(netTotalToReceive)})`}
             </button>
           </div>
         </div>
@@ -772,8 +830,20 @@ export function PosClient({
                     <span>- {fmtIDR(checkoutSuccess.discountTotal)}</span>
                   </div>
                 )}
+                {checkoutSuccess.commissionAmount > 0 && (
+                  <div className="flex justify-between text-rose-600">
+                    <span>Komisi Platform</span>
+                    <span>- {fmtIDR(checkoutSuccess.commissionAmount)}</span>
+                  </div>
+                )}
+                {checkoutSuccess.fixedFeeAmount > 0 && (
+                  <div className="flex justify-between text-rose-600">
+                    <span>Biaya Tetap</span>
+                    <span>- {fmtIDR(checkoutSuccess.fixedFeeAmount)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between font-bold text-sm">
-                  <span>Total</span>
+                  <span>{checkoutSuccess.commissionAmount > 0 || checkoutSuccess.fixedFeeAmount > 0 ? "Penerimaan Bersih" : "Total"}</span>
                   <span>{fmtIDR(checkoutSuccess.grandTotal)}</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
