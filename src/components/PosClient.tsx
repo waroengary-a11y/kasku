@@ -342,7 +342,7 @@ export function PosClient({
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col">
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-slate-100 flex flex-col">
       {/* Top Bar Kasir */}
       <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-20">
         <div className="flex items-center gap-3">
@@ -403,7 +403,7 @@ export function PosClient({
       </header>
 
       {/* Main Content: 2 Kolom (Katalog Menu + Keranjang Kasir) */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
         {/* Kolom Kiri: Katalog Menu / Produk */}
         <div className="flex-1 p-4 lg:p-6 overflow-y-auto space-y-4">
           {/* Channel Info Banner jika channel ojol */}
@@ -528,8 +528,8 @@ export function PosClient({
         </div>
 
         {/* Kolom Kanan: Panel Keranjang & Pembayaran Kasir */}
-        <div className="w-full lg:w-[420px] bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col shadow-lg z-10">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="w-full lg:w-[420px] lg:h-full lg:min-h-0 bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col shadow-lg z-10">
+          <div className="p-3.5 border-b border-slate-100 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
               <ShoppingCart className="w-5 h-5 text-blue-600" />
               <h2 className="font-bold text-slate-900 text-base">Pesanan ({CHANNEL_META[channel].badge})</h2>
@@ -550,7 +550,7 @@ export function PosClient({
           </div>
 
           {/* List Item Keranjang */}
-          <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[35vh] lg:max-h-none">
+          <div className="flex-1 min-h-[120px] p-3.5 overflow-y-auto space-y-2.5 max-h-[35vh] lg:max-h-none">
             {cart.map((it) => {
               const currentPrice = it.customPrice ?? getProductPrice(it.product);
               const lineRaw = currentPrice * it.qty;
@@ -646,7 +646,7 @@ export function PosClient({
           </div>
 
           {/* Form Pembayaran & Checkout */}
-          <div className="p-4 border-t border-slate-100 bg-slate-50/50 space-y-3.5">
+          <div className="shrink-0 p-3.5 border-t border-slate-100 bg-slate-50/50 space-y-2.5">
             {error && (
               <div className="p-2.5 rounded-xl bg-rose-50 text-rose-700 text-xs font-semibold">
                 {error}
