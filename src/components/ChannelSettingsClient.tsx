@@ -132,13 +132,24 @@ export function ChannelSettingsClient({
   }
 
   // ── Product Prices Handlers ───────────────────────────────────────
-  function setProductChannelPrice(productId: string, channelId: ChannelId, price: number) {
-    const existing = settings.productPrices.filter(
+  function updateProductChannelEntry(
+    productId: string,
+    channelId: ChannelId,
+    patch: { price?: number; fixedCommissionRp?: number }
+  ) {
+    const prev = settings.productPrices.find(
+      (pp) => pp.productId === productId && pp.channelId === channelId
+    );
+    const nextPrice = patch.price !== undefined ? patch.price : (prev?.price ?? 0);
+    const nextFixed = patch.fixedCommissionRp !== undefined ? patch.fixedCommissionRp : (prev?.fixedCommissionRp ?? 0);
+
+    const others = settings.productPrices.filter(
       (pp) => !(pp.productId === productId && pp.channelId === channelId)
     );
-    const next = price > 0
-      ? [...existing, { productId, channelId, price }]
-      : existing;
+    const next =
+      nextPrice > 0 || nextFixed > 0
+        ? [...others, { productId, channelId, price: nextPrice, fixedCommissionRp: nextFixed }]
+        : others;
     setSettings({ ...settings, productPrices: next });
   }
 
@@ -147,6 +158,13 @@ export function ChannelSettingsClient({
       (p) => p.productId === productId && p.channelId === channelId
     );
     return pp?.price ?? 0;
+  }
+
+  function getProductFixedComm(productId: string, channelId: ChannelId): number {
+    const pp = settings.productPrices.find(
+      (p) => p.productId === productId && p.channelId === channelId
+    );
+    return pp?.fixedCommissionRp ?? 0;
   }
 
   // ── Strike Promo Handlers ─────────────────────────────────────────
@@ -325,7 +343,10 @@ export function ChannelSettingsClient({
         <div className="space-y-4">
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-2 text-xs text-blue-700">
             <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            <span>Kosongkan / isi 0 untuk menggunakan <strong>harga dasar + markup global channel</strong>. Isi harga khusus untuk override per produk.</span>
+            <span>
+              <strong>Harga:</strong> kosongkan untuk pakai harga dasar + markup global.{" "}
+              <strong>Pot. Tetap (Rp):</strong> isi jika produk ini memiliki potongan tetap per porsi (misal Rp 2.000) yang menggantikan komisi % global channel.
+            </span>
           </div>
 
           <div className="relative">
@@ -362,25 +383,42 @@ export function ChannelSettingsClient({
                 </div>
                 {CHANNEL_IDS.map((cid) => {
                   const val = getProductPrice(p.id, cid);
+                  const fixedComm = getProductFixedComm(p.id, cid);
                   const effective = getProductPriceForChannel(p.sellPrice, p.id, cid, settings);
                   const ch = settings.channels.find((c) => c.channelId === cid);
                   return (
-                    <div key={cid} className="text-center">
+                    <div key={cid} className="text-center space-y-1">
                       <input
                         type="number" min="0"
                         value={val || ""}
-                        onChange={(e) => setProductChannelPrice(p.id, cid, parseInt(e.target.value) || 0)}
+                        onChange={(e) => updateProductChannelEntry(p.id, cid, { price: parseInt(e.target.value) || 0 })}
                         placeholder={String(effective)}
+                        title="Harga Jual Khusus (Rp)"
                         className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-right focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                       />
+                      {cid !== "offline" && (
+                        <input
+                          type="number" min="0"
+                          value={fixedComm || ""}
+                          onChange={(e) => updateProductChannelEntry(p.id, cid, { fixedCommissionRp: parseInt(e.target.value) || 0 })}
+                          placeholder="Pot. Rp"
+                          title="Potongan Tetap Khusus per Porsi (Rp) — menggantikan komisi % global"
+                          className="w-full px-2 py-1 bg-rose-50/50 border border-rose-200 rounded-lg text-[11px] font-semibold text-right text-rose-700 placeholder:text-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+                        />
+                      )}
                       {ch && ch.markupPct > 0 && !val && (
-                        <div className="text-[10px] text-slate-400 mt-0.5">
+                        <div className="text-[10px] text-slate-400">
                           +{ch.markupPct}% → {fmtIDR(effective)}
                         </div>
                       )}
                       {val > 0 && (
-                        <div className={`text-[10px] mt-0.5 font-semibold ${val < p.sellPrice ? "text-rose-500" : "text-emerald-600"}`}>
+                        <div className={`text-[10px] font-semibold ${val < p.sellPrice ? "text-rose-500" : "text-emerald-600"}`}>
                           {fmtPct(((val - p.sellPrice) / p.sellPrice) * 100)} dari normal
+                        </div>
+                      )}
+                      {fixedComm > 0 && (
+                        <div className="text-[10px] font-bold text-rose-600">
+                          Pot. tetap {fmtIDR(fixedComm)}/porsi
                         </div>
                       )}
                     </div>

@@ -20,7 +20,7 @@ import {
 import {
   ChannelSettingsPayload, DEFAULT_CHANNEL_SETTINGS, ChannelId,
   CHANNEL_META, CHANNEL_IDS, getProductPriceForChannel,
-  calculateNetRevenue, DEFAULT_SCHEMES,
+  getProductFixedCommission, calculateCartNetRevenue, DEFAULT_SCHEMES,
 } from "@/lib/channel-settings";
 
 interface ProductItem {
@@ -227,18 +227,20 @@ export function PosClient({
   );
 
   const posCalcResult = useMemo(() => {
-    return calculateNetRevenue(
-      {
-        grossPrice: rawSubtotal,
-        merchantDiscount: autoBillDiscount + (Number(extraDiscountTotal) || 0),
-        platformDiscount: 0,
-        deliverySubsidy: Number(deliverySubsidy) || 0,
-        hpp: 0,
-      },
+    const calcItems = cart.map((it) => {
+      const price = it.customPrice ?? getProductPrice(it.product);
+      const lineNet = price * it.qty * (1 - it.discountPct / 100);
+      return { productId: it.product.id, qty: it.qty, lineNet };
+    });
+    return calculateCartNetRevenue(
+      calcItems,
+      autoBillDiscount + (Number(extraDiscountTotal) || 0),
+      Number(deliverySubsidy) || 0,
       activeChannelCfg,
-      activeScheme
+      activeScheme,
+      channelSettings
     );
-  }, [rawSubtotal, autoBillDiscount, extraDiscountTotal, deliverySubsidy, activeChannelCfg, activeScheme]);
+  }, [cart, autoBillDiscount, extraDiscountTotal, deliverySubsidy, activeChannelCfg, activeScheme, channelSettings]);
 
   const netTotalToReceive = channel !== "offline" ? posCalcResult.netRevenue : grandTotal;
 
@@ -560,8 +562,13 @@ export function PosClient({
                       <div className="font-bold text-slate-900 text-sm truncate">
                         {it.product.name}
                       </div>
-                      <div className="text-xs text-slate-400">
-                        {fmtIDR(currentPrice)} / {it.product.unit}
+                      <div className="text-xs text-slate-400 flex items-center gap-2">
+                        <span>{fmtIDR(currentPrice)} / {it.product.unit}</span>
+                        {channel !== "offline" && getProductFixedCommission(it.product.id, channel, channelSettings) > 0 && (
+                          <span className="text-[10px] font-bold bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded border border-rose-200">
+                            Pot. Tetap {fmtIDR(getProductFixedCommission(it.product.id, channel, channelSettings))}/porsi
+                          </span>
+                        )}
                       </div>
                     </div>
                     <button
@@ -780,7 +787,13 @@ export function PosClient({
                   </div>
                   {posCalcResult.commissionAmount > 0 && (
                     <div className="flex justify-between text-rose-600">
-                      <span>Komisi Aplikasi ({activeChannelCfg.commissionPct}%)</span>
+                      <span>
+                        {posCalcResult.specialCommissionAmount > 0 && posCalcResult.pctCommissionAmount > 0
+                          ? `Komisi (${activeChannelCfg.commissionPct}%) + Pot. Khusus`
+                          : posCalcResult.specialCommissionAmount > 0
+                            ? "Potongan Khusus Produk"
+                            : `Komisi Aplikasi (${activeChannelCfg.commissionPct}%)`}
+                      </span>
                       <span className="font-semibold">- {fmtIDR(posCalcResult.commissionAmount)}</span>
                     </div>
                   )}

@@ -52,6 +52,7 @@ export interface ProductChannelPrice {
   productId: string;
   channelId: ChannelId;
   price: number; // Harga khusus; 0 = pakai harga dasar + markup global
+  fixedCommissionRp?: number; // Potongan tetap khusus per porsi (Rp); > 0 menggantikan komisi % channel
 }
 
 // ─── 5. Program Promo ───────────────────────────────────────
@@ -238,4 +239,126 @@ export function getProductPriceForChannel(
     return Math.round(basePrice * (1 + ch.markupPct / 100));
   }
   return basePrice;
+}
+
+/** Ambil potongan tetap khusus per porsi untuk produk di channel tertentu (0 = ikut aturan % global) */
+export function getProductFixedCommission(
+  productId: string,
+  channelId: ChannelId,
+  settings: ChannelSettingsPayload
+): number {
+  const custom = settings.productPrices.find(
+    (pp) => pp.productId === productId && pp.channelId === channelId
+  );
+  return custom?.fixedCommissionRp && custom.fixedCommissionRp > 0 ? custom.fixedCommissionRp : 0;
+}
+
+export interface CartCalcItem {
+  productId: string;
+  qty: number;
+  lineNet: number; // total harga item setelah diskon item
+}
+
+/**
+ * Kalkulasi penerimaan bersih dengan mendukung campuran:
+ * - Item normal: kena komisi % global channel
+ * - Item khusus (fixedCommissionRp > 0): kena potongan tetap Rp/porsi, tidak kena komisi % global
+ */
+export function calculateCartNetRevenue(
+  items: CartCalcItem[],
+  merchantDiscount: number,
+  deliverySubsidy: number,
+  channel: ChannelCommission,
+  scheme: CalcScheme,
+  settings: ChannelSettingsPayload
+): CalcOutput & { pctCommissionAmount: number; specialCommissionAmount: number } {
+  let normalGross = 0;
+  let specialGross = 0;
+  let specialCommissionTotal = 0;
+
+  for (const it of items) {
+    const fixedPerQty = getProductFixedCommission(it.productId, channel.channelId, settings);
+    if (fixedPerQty > 0) {
+      specialGross += it.lineNet;
+      specialCommissionTotal += fixedPerQty * it.qty;
+    } else {
+      normalGross += it.lineNet;
+    }
+  }
+
+  const totalGross = normalGross + specialGross;
+  let running = totalGross;
+  let discountApplied = false;
+  let komisiApplied = false;
+  let subsidyApplied = false;
+  let pctCommissionAmount = 0;
+  let commissionBase = totalGross;
+
+  const stepLog: Array<{ label: string; amount: number; running: number }> = [
+    { label: "Total harga produk", amount: totalGross, running },
+  ];
+
+  for (const step of scheme.steps) {
+    if (step.type === "diskon_merchant" && merchantDiscount > 0) {
+      running -= merchantDiscount;
+      discountApplied = true;
+      stepLog.push({ label: "Dikurangi diskon merchant", amount: -merchantDiscount, running });
+    } else if (step.type === "komisi_pct") {
+      komisiApplied = true;
+      // Hanya item normal yang kena komisi %
+      const normalBase = discountApplied
+        ? Math.max(0, normalGross - merchantDiscount)
+        : normalGross;
+      commissionBase = normalBase;
+      pctCommissionAmount = Math.round((normalBase * channel.commissionPct) / 100);
+      const totalStepComm = pctCommissionAmount + specialCommissionTotal;
+      running -= totalStepComm;
+      stepLog.push({
+        label: specialCommissionTotal > 0
+          ? `Komisi (${channel.commissionPct}%) + Pot. Khusus`
+          : `Komisi aplikasi (${channel.commissionPct}%)`,
+        amount: -totalStepComm,
+        running,
+      });
+    } else if (step.type === "biaya_tetap" && channel.fixedFeePerOrder > 0) {
+      running -= channel.fixedFeePerOrder;
+      stepLog.push({ label: "Biaya tetap per order", amount: -channel.fixedFeePerOrder, running });
+    } else if (step.type === "subsidi_ongkir" && deliverySubsidy > 0) {
+      running -= deliverySubsidy;
+      subsidyApplied = true;
+      stepLog.push({ label: "Subsidi ongkir merchant", amount: -deliverySubsidy, running });
+    }
+  }
+
+  if (!komisiApplied && specialCommissionTotal > 0) {
+    running -= specialCommissionTotal;
+    stepLog.push({ label: "Potongan tetap khusus produk", amount: -specialCommissionTotal, running });
+  }
+
+  if (!subsidyApplied && deliverySubsidy > 0) {
+    running -= deliverySubsidy;
+    stepLog.push({ label: "Subsidi ongkir merchant", amount: -deliverySubsidy, running });
+  }
+
+  const commissionAmount = pctCommissionAmount + specialCommissionTotal;
+  const netRevenue = running;
+
+  stepLog.push({ label: "Penerimaan bersih", amount: netRevenue, running: netRevenue });
+
+  return {
+    grossPrice: totalGross,
+    merchantDiscount,
+    platformDiscount: 0,
+    commissionBase,
+    commissionAmount,
+    pctCommissionAmount,
+    specialCommissionAmount: specialCommissionTotal,
+    fixedFee: channel.fixedFeePerOrder,
+    deliverySubsidy,
+    netRevenue,
+    hpp: 0,
+    profit: netRevenue,
+    marginPct: totalGross > 0 ? (netRevenue / totalGross) * 100 : 0,
+    steps: stepLog,
+  };
 }

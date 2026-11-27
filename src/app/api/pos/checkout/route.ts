@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createBalancedJournal, getNextDocNumber } from "@/lib/accounting";
-import { getChannelSettings, calculateNetRevenue, DEFAULT_CHANNEL_SETTINGS } from "@/lib/channel-settings-server";
+import { getChannelSettings, calculateCartNetRevenue, DEFAULT_CHANNEL_SETTINGS } from "@/lib/channel-settings-server";
 
 interface PosItemInput {
   productId: string;
@@ -149,17 +149,14 @@ export async function POST(req: Request) {
     const totalMerchantDiscount = itemDiscountTotal + (Number(merchantDiscount) || 0) + (Number(extraDiscount) || 0);
     const subtotalAfterItemDisc = grossSubtotal - itemDiscountTotal;
 
-    // Kalkulasi penerimaan bersih (net revenue) menggunakan skema
-    const calcResult = calculateNetRevenue(
-      {
-        grossPrice: subtotalAfterItemDisc,
-        merchantDiscount: (Number(merchantDiscount) || 0) + (Number(extraDiscount) || 0),
-        platformDiscount: 0,
-        deliverySubsidy: Number(deliverySubsidy) || 0,
-        hpp: 0,
-      },
+    // Kalkulasi penerimaan bersih (net revenue) menggunakan skema + override potongan tetap per produk
+    const calcResult = calculateCartNetRevenue(
+      processedItems.map((p) => ({ productId: p.productId, qty: p.qty, lineNet: p.lineTotal })),
+      (Number(merchantDiscount) || 0) + (Number(extraDiscount) || 0),
+      Number(deliverySubsidy) || 0,
       chCfg,
-      scheme
+      scheme,
+      channelSettings
     );
 
     const netRevenue = calcResult.netRevenue;
