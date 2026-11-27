@@ -21,6 +21,7 @@ import {
   ChannelSettingsPayload, DEFAULT_CHANNEL_SETTINGS, ChannelId,
   CHANNEL_META, CHANNEL_IDS, getProductPriceForChannel,
   getProductFixedCommission, calculateCartNetRevenue, DEFAULT_SCHEMES,
+  getProductVariantGroups,
 } from "@/lib/channel-settings";
 
 interface ProductItem {
@@ -35,10 +36,13 @@ interface ProductItem {
 }
 
 interface CartItem {
+  cartKey: string;
   product: ProductItem;
   qty: number;
   discountPct: number;
   customPrice?: number; // Override harga jika diubah kasir
+  variantsLabel?: string;
+  variantsExtraPrice?: number;
 }
 
 interface CashAccount {
@@ -82,6 +86,8 @@ export function PosClient({
   const [tendered, setTendered] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [variantModalProduct, setVariantModalProduct] = useState<ProductItem | null>(null);
+  const [variantSelections, setVariantSelections] = useState<Record<string, string[]>>({});
   const [checkoutSuccess, setCheckoutSuccess] = useState<{
     invoiceNo: string;
     recapInvoiceNo?: string;
@@ -136,16 +142,60 @@ export function PosClient({
 
   // Cart operations
   function addToCart(p: ProductItem) {
+    const groups = getProductVariantGroups(p.id, channelSettings);
+    if (groups.length > 0) {
+      setVariantModalProduct(p);
+      setVariantSelections({});
+      return;
+    }
     const channelPrice = getProductPrice(p);
     setCart((prev) => {
-      const existing = prev.find((it) => it.product.id === p.id);
+      const existing = prev.find((it) => it.cartKey === p.id);
       if (existing) {
         return prev.map((it) =>
-          it.product.id === p.id ? { ...it, qty: it.qty + 1 } : it
+          it.cartKey === p.id ? { ...it, qty: it.qty + 1 } : it
         );
       }
-      return [...prev, { product: p, qty: 1, discountPct: 0, customPrice: channelPrice }];
+      return [...prev, { cartKey: p.id, product: p, qty: 1, discountPct: 0, customPrice: channelPrice }];
     });
+  }
+
+  function confirmAddWithVariants() {
+    if (!variantModalProduct) return;
+    const p = variantModalProduct;
+    const groups = getProductVariantGroups(p.id, channelSettings);
+    const chosenOptions = groups.flatMap((g) => {
+      const selIds = variantSelections[g.id] ?? [];
+      return g.options.filter((o) => selIds.includes(o.id));
+    });
+    const extraPrice = chosenOptions.reduce((s, o) => s + (o.extraPrice || 0), 0);
+    const variantsLabel = chosenOptions.map((o) => o.name).join(", ");
+    const sortedIds = chosenOptions.map((o) => o.id).sort().join(",");
+    const cartKey = sortedIds ? `${p.id}__${sortedIds}` : p.id;
+    const unitPrice = getProductPrice(p) + extraPrice;
+
+    setCart((prev) => {
+      const existing = prev.find((it) => it.cartKey === cartKey);
+      if (existing) {
+        return prev.map((it) =>
+          it.cartKey === cartKey ? { ...it, qty: it.qty + 1 } : it
+        );
+      }
+      return [
+        ...prev,
+        {
+          cartKey,
+          product: p,
+          qty: 1,
+          discountPct: 0,
+          customPrice: unitPrice,
+          variantsLabel: variantsLabel || undefined,
+          variantsExtraPrice: extraPrice,
+        },
+      ];
+    });
+    setVariantModalProduct(null);
+    setVariantSelections({});
   }
 
   // Jika channel diganti, sesuaikan harga item di keranjang
@@ -153,17 +203,17 @@ export function PosClient({
     setChannel(newChannel);
     setCart((prev) =>
       prev.map((it) => {
-        const newPrice = getProductPriceForChannel(it.product.sellPrice, it.product.id, newChannel, channelSettings);
+        const newPrice = getProductPriceForChannel(it.product.sellPrice, it.product.id, newChannel, channelSettings) + (it.variantsExtraPrice ?? 0);
         return { ...it, customPrice: newPrice };
       })
     );
   }
 
-  function updateQty(productId: string, delta: number) {
+  function updateQty(cartKey: string, delta: number) {
     setCart((prev) => {
       return prev
         .map((it) => {
-          if (it.product.id === productId) {
+          if (it.cartKey === cartKey) {
             const nextQty = it.qty + delta;
             return nextQty > 0 ? { ...it, qty: nextQty } : null;
           }
@@ -173,24 +223,24 @@ export function PosClient({
     });
   }
 
-  function updateItemDiscount(productId: string, discountPct: number) {
+  function updateItemDiscount(cartKey: string, discountPct: number) {
     setCart((prev) =>
       prev.map((it) =>
-        it.product.id === productId ? { ...it, discountPct: Math.max(0, Math.min(100, discountPct)) } : it
+        it.cartKey === cartKey ? { ...it, discountPct: Math.max(0, Math.min(100, discountPct)) } : it
       )
     );
   }
 
-  function updateItemPrice(productId: string, newPrice: number) {
+  function updateItemPrice(cartKey: string, newPrice: number) {
     setCart((prev) =>
       prev.map((it) =>
-        it.product.id === productId ? { ...it, customPrice: Math.max(0, newPrice) } : it
+        it.cartKey === cartKey ? { ...it, customPrice: Math.max(0, newPrice) } : it
       )
     );
   }
 
-  function removeItem(productId: string) {
-    setCart((prev) => prev.filter((it) => it.product.id !== productId));
+  function removeItem(cartKey: string) {
+    setCart((prev) => prev.filter((it) => it.cartKey !== cartKey));
   }
 
   function resetOrder() {
@@ -293,6 +343,7 @@ export function PosClient({
             qty: it.qty,
             unitPrice: it.customPrice ?? getProductPrice(it.product),
             discountPct: it.discountPct,
+            variantsLabel: it.variantsLabel,
           })),
         }),
       });
@@ -465,7 +516,8 @@ export function PosClient({
           {/* Grid Menu Kartu */}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {filteredProducts.map((p) => {
-              const inCart = cart.find((it) => it.product.id === p.id);
+              const inCartQty = cart.filter((it) => it.product.id === p.id).reduce((s, it) => s + it.qty, 0);
+              const inCart = inCartQty > 0;
               const priceInfo = getProductPriceInfo(p);
               return (
                 <div
@@ -477,7 +529,7 @@ export function PosClient({
                 >
                   {inCart && (
                     <span className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shadow-md">
-                      {inCart.qty}
+                      {inCartQty}
                     </span>
                   )}
                   {priceInfo.hasPromoStrike && (
@@ -558,7 +610,7 @@ export function PosClient({
 
               return (
                 <div
-                  key={it.product.id}
+                  key={it.cartKey}
                   className="p-3 rounded-2xl bg-slate-50 border border-slate-100 space-y-2"
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -566,6 +618,11 @@ export function PosClient({
                       <div className="font-bold text-slate-900 text-sm truncate">
                         {it.product.name}
                       </div>
+                      {it.variantsLabel && (
+                        <div className="text-[11px] text-purple-600 font-semibold mt-0.5">
+                          {it.variantsLabel}
+                        </div>
+                      )}
                       <div className="text-xs text-slate-400 flex items-center gap-2">
                         <span>{fmtIDR(currentPrice)} / {it.product.unit}</span>
                         {channel !== "offline" && getProductFixedCommission(it.product.id, channel, channelSettings) > 0 && (
@@ -577,7 +634,7 @@ export function PosClient({
                     </div>
                     <button
                       type="button"
-                      onClick={() => removeItem(it.product.id)}
+                      onClick={() => removeItem(it.cartKey)}
                       className="p-1 text-slate-300 hover:text-rose-500"
                       title="Hapus"
                     >
@@ -590,7 +647,7 @@ export function PosClient({
                     <div className="flex items-center border border-slate-200 bg-white rounded-lg">
                       <button
                         type="button"
-                        onClick={() => updateQty(it.product.id, -1)}
+                        onClick={() => updateQty(it.cartKey, -1)}
                         className="p-1.5 text-slate-500 hover:text-slate-800"
                       >
                         <Minus className="w-3 h-3" />
@@ -600,7 +657,7 @@ export function PosClient({
                       </span>
                       <button
                         type="button"
-                        onClick={() => updateQty(it.product.id, 1)}
+                        onClick={() => updateQty(it.cartKey, 1)}
                         className="p-1.5 text-slate-500 hover:text-slate-800"
                       >
                         <Plus className="w-3 h-3" />
@@ -615,7 +672,7 @@ export function PosClient({
                           min="0"
                           max="100"
                           value={it.discountPct || ""}
-                          onChange={(e) => updateItemDiscount(it.product.id, Number(e.target.value))}
+                          onChange={(e) => updateItemDiscount(it.cartKey, Number(e.target.value))}
                           placeholder="0"
                           className="w-14 pl-2 pr-5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-right"
                         />
@@ -839,6 +896,83 @@ export function PosClient({
           </div>
         </div>
       </div>
+
+      {/* Modal Pilih Variasi Menu */}
+      {variantModalProduct && (() => {
+        const groups = getProductVariantGroups(variantModalProduct.id, channelSettings);
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+              <h3 className="font-bold text-slate-900 text-base">
+                Pilih Variasi — {variantModalProduct.name}
+              </h3>
+              <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
+                {groups.map((g) => (
+                  <div key={g.id}>
+                    <div className="font-semibold text-sm text-slate-700 mb-1.5 flex items-center gap-1.5">
+                      {g.name}
+                      {g.required && <span className="text-[10px] text-rose-500 font-bold bg-rose-50 px-1.5 py-0.5 rounded">Wajib</span>}
+                      <span className="text-[10px] text-slate-400">{g.selectionType === "single" ? "(Pilih 1)" : "(Bisa lebih)"}</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {g.options.map((opt) => {
+                        const sel = (variantSelections[g.id] ?? []).includes(opt.id);
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => {
+                              setVariantSelections((prev) => {
+                                const curr = prev[g.id] ?? [];
+                                if (g.selectionType === "single") {
+                                  return { ...prev, [g.id]: sel ? [] : [opt.id] };
+                                }
+                                return {
+                                  ...prev,
+                                  [g.id]: sel ? curr.filter((id) => id !== opt.id) : [...curr, opt.id],
+                                };
+                              });
+                            }}
+                            className={`w-full flex justify-between items-center px-3 py-2.5 rounded-xl border text-sm font-medium transition ${
+                              sel
+                                ? "bg-blue-50 border-blue-500 text-blue-800"
+                                : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className="text-base">{g.selectionType === "single" ? (sel ? "●" : "○") : (sel ? "☑" : "☐")}</span>
+                              {opt.name}
+                            </span>
+                            {opt.extraPrice > 0 && (
+                              <span className="text-xs text-slate-500 font-semibold">+{fmtIDR(opt.extraPrice)}</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setVariantModalProduct(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmAddWithVariants}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700"
+                >
+                  Tambah ke Keranjang
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal Sukses & Cetak Struk */}
       {checkoutSuccess && (

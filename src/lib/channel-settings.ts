@@ -80,6 +80,21 @@ export interface PromoProgram {
   deliverySubsidyRp: number;
 }
 
+// ─── 5b. Variasi / Tambahan Menu (Sambal, Extra Minum/Telur/Nasi) ──
+export interface MenuVariantOption {
+  id: string;
+  name: string;
+  extraPrice: number;
+}
+
+export interface MenuVariantGroup {
+  id: string;
+  name: string;
+  selectionType: "single" | "multiple";
+  required?: boolean;
+  options: MenuVariantOption[];
+}
+
 // ─── 6. Payload Utama (disimpan di DB) ───────────────────────
 export interface ChannelSettingsPayload {
   channels: ChannelCommission[];
@@ -87,6 +102,8 @@ export interface ChannelSettingsPayload {
   productPrices: ProductChannelPrice[];  // Harga khusus per produk per channel
   promoPrograms: PromoProgram[];
   strikePromos: Record<string, number>;  // productId -> harga coret global (backward compat)
+  variantGroups?: MenuVariantGroup[];    // Grup variasi & tambahan menu
+  productVariants?: Record<string, string[]>; // productId -> list of MenuVariantGroup.id
 }
 
 // ─── 7. Default Values ────────────────────────────────────────
@@ -134,6 +151,8 @@ export const DEFAULT_CHANNEL_SETTINGS: ChannelSettingsPayload = {
   productPrices: [],
   promoPrograms: [],
   strikePromos: {},
+  variantGroups: [],
+  productVariants: {},
 };
 
 // ─── 8. Fungsi Kalkulasi Net Revenue ──────────────────────────
@@ -251,6 +270,18 @@ export function getProductFixedCommission(
     (pp) => pp.productId === productId && pp.channelId === channelId
   );
   return custom?.fixedCommissionRp && custom.fixedCommissionRp > 0 ? custom.fixedCommissionRp : 0;
+}
+
+/** Ambil daftar grup variasi yang tersambung ke produk tertentu */
+export function getProductVariantGroups(
+  productId: string,
+  settings: ChannelSettingsPayload
+): MenuVariantGroup[] {
+  const ids = settings.productVariants?.[productId];
+  if (!ids || ids.length === 0 || !settings.variantGroups) return [];
+  return ids
+    .map((gid) => settings.variantGroups!.find((g) => g.id === gid))
+    .filter((g): g is MenuVariantGroup => Boolean(g && g.options.length > 0));
 }
 
 export interface CartCalcItem {

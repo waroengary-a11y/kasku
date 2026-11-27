@@ -22,6 +22,8 @@ export async function getChannelSettings(companyId: string): Promise<ChannelSett
       productPrices: Array.isArray(parsed.productPrices) ? parsed.productPrices : [],
       promoPrograms: Array.isArray(parsed.promoPrograms) ? parsed.promoPrograms : [],
       strikePromos: typeof parsed.strikePromos === "object" && parsed.strikePromos ? parsed.strikePromos : {},
+      variantGroups: Array.isArray(parsed.variantGroups) ? parsed.variantGroups : [],
+      productVariants: typeof parsed.productVariants === "object" && parsed.productVariants ? parsed.productVariants : {},
     };
   } catch {
     return DEFAULT_CHANNEL_SETTINGS;

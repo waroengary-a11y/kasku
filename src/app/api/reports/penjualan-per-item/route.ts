@@ -122,7 +122,8 @@ export async function GET(req: Request) {
           const m = s.match(/^(\d+(?:\.\d+)?)x\s+(.+)$/i);
           if (!m) return null;
           const q = Number(m[1]) || 1;
-          const prod = productByName.get(m[2].trim().toLowerCase());
+          const cleanName = m[2].replace(/\s*\[[^\]]+\]\s*$/, "").trim().toLowerCase();
+          const prod = productByName.get(cleanName);
           return prod ? { prod, qty: q } : null;
         })
         .filter((x): x is { prod: (typeof allProducts)[number]; qty: number } => x !== null);

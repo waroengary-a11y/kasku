@@ -2,13 +2,13 @@
 
 import { useState, useMemo } from "react";
 import {
-  ArrowLeft, Check, ChevronDown, ChevronRight, GripVertical, Info,
+  ArrowLeft, Check, ChevronDown, ChevronRight, GripVertical, Info, Layers,
   Percent, Plus, Save, Search, Settings2, Sparkles, Tag, Trash2, TrendingDown, Zap,
 } from "lucide-react";
 import Link from "next/link";
 import {
   ChannelSettingsPayload, ChannelCommission, CalcScheme, PromoStep,
-  PromoStepType, ChannelId, CHANNEL_IDS, CHANNEL_META,
+  PromoStepType, ChannelId, CHANNEL_IDS, CHANNEL_META, MenuVariantGroup,
   calculateNetRevenue, DEFAULT_CHANNEL_SETTINGS, DEFAULT_SCHEMES,
   getProductPriceForChannel,
 } from "@/lib/channel-settings";
@@ -44,7 +44,7 @@ export function ChannelSettingsClient({
   products: ProductRow[];
 }) {
   const [settings, setSettings] = useState<ChannelSettingsPayload>(initialSettings);
-  const [activeTab, setActiveTab] = useState<"channels" | "prices" | "schemes" | "promo" | "simulator">("channels");
+  const [activeTab, setActiveTab] = useState<"channels" | "prices" | "variants" | "schemes" | "promo" | "simulator">("channels");
   const [saving, setSaving] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
   const [error, setError] = useState("");
@@ -195,11 +195,12 @@ export function ChannelSettingsClient({
   }, [products, searchProduct]);
 
   const TABS = [
-    { id: "channels", label: "Komisi & Markup", icon: <Settings2 className="w-4 h-4" /> },
-    { id: "prices",   label: "Harga Per Channel", icon: <Tag className="w-4 h-4" /> },
-    { id: "schemes",  label: "Skema Perhitungan", icon: <Zap className="w-4 h-4" /> },
-    { id: "promo",    label: "Diskon & Promo", icon: <Sparkles className="w-4 h-4" /> },
-    { id: "simulator", label: "Simulator", icon: <TrendingDown className="w-4 h-4" /> },
+    { id: "channels",  label: "Komisi & Markup",   icon: <Settings2 className="w-4 h-4" /> },
+    { id: "prices",    label: "Harga Per Channel", icon: <Tag className="w-4 h-4" /> },
+    { id: "variants",  label: "Variasi Menu",      icon: <Layers className="w-4 h-4" /> },
+    { id: "schemes",   label: "Skema Perhitungan", icon: <Zap className="w-4 h-4" /> },
+    { id: "promo",     label: "Diskon & Promo",    icon: <Sparkles className="w-4 h-4" /> },
+    { id: "simulator", label: "Simulator",         icon: <TrendingDown className="w-4 h-4" /> },
   ] as const;
 
   return (
@@ -698,6 +699,241 @@ export function ChannelSettingsClient({
           </div>
         </div>
       )}
+
+      {/* ═══════════════════════════════════════════════════════════
+          TAB: VARIASI & TAMBAHAN MENU
+      ═══════════════════════════════════════════════════════════ */}
+      {activeTab === "variants" && (() => {
+        const variantGroups = settings.variantGroups ?? [];
+        const productVariants = settings.productVariants ?? {};
+
+        const setGroups = (next: MenuVariantGroup[]) =>
+          setSettings({ ...settings, variantGroups: next });
+
+        const addTemplateGroups = () => {
+          const templates: MenuVariantGroup[] = [
+            {
+              id: "vg-" + nanoid6(),
+              name: "Pilih Sambal",
+              selectionType: "single",
+              required: false,
+              options: [
+                { id: "vo-" + nanoid6(), name: "Sambal Pisah", extraPrice: 0 },
+                { id: "vo-" + nanoid6(), name: "Sambal Campur", extraPrice: 0 },
+                { id: "vo-" + nanoid6(), name: "Extra Sambal", extraPrice: 2000 },
+              ],
+            },
+            {
+              id: "vg-" + nanoid6(),
+              name: "Tambahan Menu",
+              selectionType: "multiple",
+              required: false,
+              options: [
+                { id: "vo-" + nanoid6(), name: "Tambahan Nasi", extraPrice: 5000 },
+                { id: "vo-" + nanoid6(), name: "Tambahan Telur", extraPrice: 5500 },
+                { id: "vo-" + nanoid6(), name: "Tambahan Minum", extraPrice: 4000 },
+              ],
+            },
+          ];
+          setGroups([...variantGroups, ...templates]);
+        };
+
+        const addGroup = () => {
+          setGroups([
+            ...variantGroups,
+            {
+              id: "vg-" + nanoid6(),
+              name: "Grup Variasi Baru",
+              selectionType: "multiple",
+              required: false,
+              options: [{ id: "vo-" + nanoid6(), name: "Opsi 1", extraPrice: 0 }],
+            },
+          ]);
+        };
+
+        const toggleProductLink = (productId: string, groupId: string) => {
+          const curr = productVariants[productId] ?? [];
+          const nextIds = curr.includes(groupId)
+            ? curr.filter((id) => id !== groupId)
+            : [...curr, groupId];
+          setSettings({
+            ...settings,
+            productVariants: { ...productVariants, [productId]: nextIds },
+          });
+        };
+
+        return (
+          <div className="space-y-5">
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5 text-xs text-blue-800">
+                <Info className="w-4 h-4 mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-bold">Variasi &amp; Tambahan Menu (Add-On)</div>
+                  <p className="mt-0.5 text-blue-700">
+                    Buat grup variasi (contoh: <strong>Sambal Pisah</strong>, <strong>Tambahan Minum</strong>, <strong>Tambahan Telur</strong>, <strong>Tambahan Nasi</strong>) lalu centang menu mana saja yang tersambung. Jangan lupa klik <strong>Simpan</strong> di kanan atas.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {variantGroups.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={addTemplateGroups}
+                    className="px-3 py-2 rounded-xl bg-white border border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-100 transition"
+                  >
+                    + Buat Contoh Sambal &amp; Tambahan
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={addGroup}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Tambah Grup Variasi
+                </button>
+              </div>
+            </div>
+
+            {variantGroups.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-sm text-slate-400">
+                Belum ada grup variasi. Klik <strong>+ Buat Contoh Sambal &amp; Tambahan</strong> atau <strong>Tambah Grup Variasi</strong>.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {variantGroups.map((grp, gIdx) => (
+                  <div key={grp.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                      <div className="flex flex-wrap items-center gap-2 flex-1">
+                        <input
+                          type="text"
+                          value={grp.name}
+                          onChange={(e) => {
+                            const next = [...variantGroups];
+                            next[gIdx] = { ...grp, name: e.target.value };
+                            setGroups(next);
+                          }}
+                          placeholder="Nama Grup (mis. Pilih Sambal)"
+                          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-bold text-slate-900 min-w-[200px]"
+                        />
+                        <select
+                          value={grp.selectionType}
+                          onChange={(e) => {
+                            const next = [...variantGroups];
+                            next[gIdx] = { ...grp, selectionType: e.target.value as "single" | "multiple" };
+                            setGroups(next);
+                          }}
+                          className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold bg-white"
+                        >
+                          <option value="single">Pilih 1 saja (Radio)</option>
+                          <option value="multiple">Boleh pilih banyak (Checkbox)</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setGroups(variantGroups.filter((_, i) => i !== gIdx))}
+                        className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition"
+                        title="Hapus grup variasi"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Daftar Opsi Variasi */}
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold text-slate-500">Daftar Pilihan / Tambahan:</div>
+                      {grp.options.map((opt, oIdx) => (
+                        <div key={opt.id} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={opt.name}
+                            onChange={(e) => {
+                              const next = [...variantGroups];
+                              const opts = [...grp.options];
+                              opts[oIdx] = { ...opt, name: e.target.value };
+                              next[gIdx] = { ...grp, options: opts };
+                              setGroups(next);
+                            }}
+                            placeholder="Nama opsi (mis. Sambal Pisah)"
+                            className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium"
+                          />
+                          <div className="flex items-center gap-1">
+                            <span className="text-[11px] text-slate-400">+Rp</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={opt.extraPrice}
+                              onChange={(e) => {
+                                const next = [...variantGroups];
+                                const opts = [...grp.options];
+                                opts[oIdx] = { ...opt, extraPrice: parseInt(e.target.value) || 0 };
+                                next[gIdx] = { ...grp, options: opts };
+                                setGroups(next);
+                              }}
+                              className="w-24 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-right"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = [...variantGroups];
+                              next[gIdx] = { ...grp, options: grp.options.filter((_, i) => i !== oIdx) };
+                              setGroups(next);
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = [...variantGroups];
+                          next[gIdx] = {
+                            ...grp,
+                            options: [...grp.options, { id: "vo-" + nanoid6(), name: "", extraPrice: 0 }],
+                          };
+                          setGroups(next);
+                        }}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 mt-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Tambah Pilihan
+                      </button>
+                    </div>
+
+                    {/* Sambungkan ke Menu */}
+                    <div className="pt-3 border-t border-slate-100">
+                      <div className="text-xs font-semibold text-slate-600 mb-2">
+                        Sambungkan ke Menu ({products.filter((p) => (productVariants[p.id] ?? []).includes(grp.id)).length} dipilih):
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-1">
+                        {products.map((p) => {
+                          const checked = (productVariants[p.id] ?? []).includes(grp.id);
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => toggleProductLink(p.id, grp.id)}
+                              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition ${
+                                checked
+                                  ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              {checked ? "✓ " : ""}{p.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

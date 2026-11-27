@@ -9,6 +9,7 @@ interface PosItemInput {
   qty: number;
   unitPrice: number;
   discountPct?: number;
+  variantsLabel?: string;
 }
 
 export async function POST(req: Request) {
@@ -146,7 +147,7 @@ export async function POST(req: Request) {
 
       processedItems.push({
         productId: prod.id,
-        description: prod.name,
+        description: item.variantsLabel ? `${prod.name} [${item.variantsLabel}]` : prod.name,
         qty,
         unitPrice,
         taxRate: 0,
