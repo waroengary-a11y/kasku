@@ -125,10 +125,10 @@ export const DEFAULT_SCHEMES: CalcScheme[] = [
 
 export const DEFAULT_CHANNEL_SETTINGS: ChannelSettingsPayload = {
   channels: [
-    { channelId: "offline",    commissionPct: 0,  fixedFeePerOrder: 0,    commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_B_ID, markupPct: 0 },
-    { channelId: "gofood",     commissionPct: 20, fixedFeePerOrder: 1000, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
-    { channelId: "grabfood",   commissionPct: 20, fixedFeePerOrder: 1000, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
-    { channelId: "shopeefood", commissionPct: 20, fixedFeePerOrder: 1000, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
+    { channelId: "offline",    commissionPct: 0,  fixedFeePerOrder: 0, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_B_ID, markupPct: 0 },
+    { channelId: "gofood",     commissionPct: 20, fixedFeePerOrder: 0, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
+    { channelId: "grabfood",   commissionPct: 20, fixedFeePerOrder: 0, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
+    { channelId: "shopeefood", commissionPct: 20, fixedFeePerOrder: 0, commissionBase: "after_discount", defaultSchemeId: DEFAULT_SCHEME_ID,   markupPct: 0 },
   ],
   schemes: DEFAULT_SCHEMES,
   productPrices: [],
@@ -292,6 +292,7 @@ export function calculateCartNetRevenue(
   let komisiApplied = false;
   let subsidyApplied = false;
   let pctCommissionAmount = 0;
+  let appliedFixedFee = 0;
   let commissionBase = totalGross;
 
   const stepLog: Array<{ label: string; amount: number; running: number }> = [
@@ -320,9 +321,10 @@ export function calculateCartNetRevenue(
         amount: -totalStepComm,
         running,
       });
-    } else if (step.type === "biaya_tetap" && channel.fixedFeePerOrder > 0) {
-      running -= channel.fixedFeePerOrder;
-      stepLog.push({ label: "Biaya tetap per order", amount: -channel.fixedFeePerOrder, running });
+    } else if (step.type === "biaya_tetap" && channel.fixedFeePerOrder > 0 && normalGross > 0) {
+      appliedFixedFee = channel.fixedFeePerOrder;
+      running -= appliedFixedFee;
+      stepLog.push({ label: "Biaya tetap per order", amount: -appliedFixedFee, running });
     } else if (step.type === "subsidi_ongkir" && deliverySubsidy > 0) {
       running -= deliverySubsidy;
       subsidyApplied = true;
@@ -353,7 +355,7 @@ export function calculateCartNetRevenue(
     commissionAmount,
     pctCommissionAmount,
     specialCommissionAmount: specialCommissionTotal,
-    fixedFee: channel.fixedFeePerOrder,
+    fixedFee: appliedFixedFee,
     deliverySubsidy,
     netRevenue,
     hpp: 0,
