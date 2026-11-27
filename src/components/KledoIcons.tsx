@@ -218,3 +218,26 @@ export function IconSubPenawaran() {
     </svg>
   );
 }
+
+export function IconPromo() {
+  return (
+    <svg width="21" height="22" viewBox="0 0 24 24" fill="none">
+      <Shadow />
+      <path d="M12.5 3H7a2 2 0 0 0-2 2v5.5l9 9a2.12 2.12 0 0 0 3-3l-7-7z" fill={B} />
+      <circle cx="8" cy="8" r="1.5" fill="#fff" />
+    </svg>
+  );
+}
+
+export function IconKasir() {
+  return (
+    <svg width="21" height="22" viewBox="0 0 24 24" fill="none">
+      <Shadow />
+      <rect x="4" y="5" width="16" height="15" rx="3" fill={B} />
+      <rect x="7" y="8" width="10" height="4" rx="1" fill="#fff" />
+      <circle cx="8.5" cy="15.5" r="1" fill="#fff" />
+      <circle cx="12" cy="15.5" r="1" fill="#fff" />
+      <circle cx="15.5" cy="15.5" r="1" fill="#fff" />
+    </svg>
+  );
+}

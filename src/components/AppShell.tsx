@@ -48,6 +48,8 @@ import {
   IconSubPengiriman,
   IconSubPemesanan,
   IconSubPenawaran,
+  IconPromo,
+  IconKasir,
 } from "@/components/KledoIcons";
 
 interface AppShellProps {
@@ -58,9 +60,11 @@ interface AppShellProps {
 }
 
 const navItems = [
+  { href: "/kasir", label: "Kasir POS", Icon: IconKasir },
   { href: "/biaya", label: "Biaya", Icon: IconBiaya },
   { href: "/produk", label: "Produk", Icon: IconProduk },
   { href: "/inventori", label: "Inventori", Icon: IconInventori },
+  { href: "/pengaturan/promo", label: "Pengaturan Promo", Icon: IconPromo },
   { href: "/laporan", label: "Laporan", Icon: IconLaporan },
   { href: "/kas-bank", label: "Kas & Bank", Icon: IconKasBank },
   { href: "/akun", label: "Akun", Icon: IconAkun },
